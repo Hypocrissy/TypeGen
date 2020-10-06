@@ -72,7 +72,7 @@ namespace TypeGen.Core.Generator
         /// A collection (chain) of converters used for converting C# enum value names to TypeScript enum value names
         /// </summary>
         public MemberNameConverterCollection EnumValueNameConverters { get; set; }
-        
+
         /// <summary>
         /// A collection (chain) of converters used for converting C# enum value names to TypeScript enum string initializers
         /// </summary>
@@ -97,7 +97,7 @@ namespace TypeGen.Core.Generator
         /// Number of space characters per tab
         /// </summary>
         public int TabLength { get; set; }
-        
+
         /// <summary>
         /// Whether to use the tab character instead of multiple spaces
         /// </summary>
@@ -129,7 +129,7 @@ namespace TypeGen.Core.Generator
         /// Specifies default values to generate for given TypeScript types
         /// </summary>
         public IDictionary<string, string> DefaultValuesForTypes { get; set; }
-        
+
         /// <summary>
         /// Specifies TypeScript type unions (excluding the main type) for TypeScript properties of specified types
         /// </summary>
@@ -150,7 +150,7 @@ namespace TypeGen.Core.Generator
         /// Heading section (initial section) of a TypeScript file. By default it's "This is a TypeGen auto-generated file. (...)"
         /// </summary>
         public string FileHeading { get; set; }
-        
+
         /// <summary>
         /// Whether to use default exports for the generated TypeScript types
         /// </summary>
@@ -160,5 +160,10 @@ namespace TypeGen.Core.Generator
         /// The file extension to use for the index file(s). Defaults to whatever is set for TypeScriptFileExtension.
         /// </summary>
         public string IndexFileExtension { get; set; }
+
+        /// <summary>
+        /// Classes will be generated as Interfaces
+        /// </summary>
+        public bool ClassAsInterface { get; set; } = false;
     }
 }

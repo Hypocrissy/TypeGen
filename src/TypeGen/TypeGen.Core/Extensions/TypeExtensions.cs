@@ -1,9 +1,9 @@
-﻿using System;
+﻿using Newtonsoft.Json;
+using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Reflection;
-using System.Text;
-using System.Threading.Tasks;
+using TypeGen.Core.Generator.Services;
 using TypeGen.Core.Metadata;
 using TypeGen.Core.TypeAnnotations;
 using TypeGen.Core.Validation;
@@ -22,7 +22,7 @@ namespace TypeGen.Core.Extensions
         {
             Requires.NotNull(type, nameof(type));
             Requires.NotNull(reader, nameof(reader));
-            
+
             return reader.GetAttribute<ExportTsClassAttribute>(type) != null ||
                    reader.GetAttribute<ExportTsInterfaceAttribute>(type) != null ||
                    reader.GetAttribute<ExportTsEnumAttribute>(type) != null;
@@ -38,7 +38,7 @@ namespace TypeGen.Core.Extensions
         {
             Requires.NotNull(types, nameof(types));
             Requires.NotNull(reader, nameof(reader));
-            
+
             return types.Where(t => t.HasExportAttribute(reader));
         }
 
@@ -52,8 +52,14 @@ namespace TypeGen.Core.Extensions
         {
             Requires.NotNull(memberInfos, nameof(memberInfos));
             Requires.NotNull(reader, nameof(reader));
-            
-            return memberInfos.Where(i => reader.GetAttribute<TsIgnoreAttribute>(i) == null);
+
+            var ignoreAttributes = new string[] { nameof(TsIgnoreAttribute), nameof(JsonIgnoreAttribute), "Sensitive", "IgnoreDataMember" };
+            return memberInfos.Where(i =>
+            {
+                var attrTypes = i.GetCustomAttributes(true).Select(x => x.GetType()).ToList();
+                var ret = !attrTypes.Any(x => ignoreAttributes.Any(ia => x.Name.Contains(ia)));
+                return ret;
+            });
         }
 
         /// <summary>
@@ -103,24 +109,36 @@ namespace TypeGen.Core.Extensions
         public static IEnumerable<string> GetTypeNames(this IEnumerable<object> enumerable)
         {
             Requires.NotNull(enumerable, nameof(enumerable));
-            
+
             return enumerable
                 .Select(c => c.GetType().Name);
         }
-        
-        /// <summary>
-        /// Shim for Type.GetInterface
-        /// </summary>
-        /// <param name="type"></param>
-        /// <param name="interfaceName"></param>
-        /// <returns></returns>
-        public static Type GetInterface(this Type type, string interfaceName)
+
+        public static IEnumerable<Type> GetInterfaces(this Type type, bool inherited = true)
         {
             Requires.NotNull(type, nameof(type));
-            Requires.NotNullOrEmpty(interfaceName, nameof(interfaceName));
-            
-            return type.GetInterfaces()
-                .FirstOrDefault(i => i.Name == interfaceName || i.FullName == interfaceName);
+
+            var interfaces = type.GetInterfaces().AsEnumerable();
+            if (!inherited)
+            {
+                interfaces = interfaces.Except(interfaces.SelectMany(t => t.GetInterfaces()));
+                if (type.BaseType != null)
+                {
+                    interfaces = interfaces.Except(type.BaseType.GetInterfaces());
+                }
+            }
+
+            return interfaces.ExcludeSystemTypes();
+        }
+
+        public static IEnumerable<Type> ExcludeSystemTypes(this IEnumerable<Type> types)
+        {
+            return types.Where(x => !x.Namespace.Contains("System"));
+        }
+
+        public static IEnumerable<TypeDependencyInfo> ExcludeSystemTypes(this IEnumerable<TypeDependencyInfo> types)
+        {
+            return types.Where(x => !x.Type.Namespace.Contains("System"));
         }
 
         /// <summary>
@@ -139,19 +157,20 @@ namespace TypeGen.Core.Extensions
 
             if (!typeInfo.IsClass && !typeInfo.IsInterface) return Enumerable.Empty<MemberInfo>();
 
-            var fieldInfos = (IEnumerable<MemberInfo>) typeInfo.DeclaredFields
+            var fieldInfos = (IEnumerable<MemberInfo>)typeInfo.DeclaredFields
                 .WithMembersFilter();
-            
-            var propertyInfos = (IEnumerable<MemberInfo>) typeInfo.DeclaredProperties
+
+            var propertyInfos = (IEnumerable<MemberInfo>)typeInfo.DeclaredProperties
                 .WithMembersFilter();
 
             if (withoutTsIgnore)
             {
                 fieldInfos = fieldInfos.WithoutTsIgnore(metadataReader);
                 propertyInfos = propertyInfos.WithoutTsIgnore(metadataReader);
-            }  
+            }
 
-            return fieldInfos.Union(propertyInfos);
+            var union = fieldInfos.Union(propertyInfos);
+            return union;
         }
     }
 }

@@ -54,11 +54,11 @@ namespace TypeGen.Core.Generator.Services
             _headingTemplate = _internalStorage.GetEmbeddedResource("TypeGen.Core.Templates.Heading.tpl");
         }
 
-        public string FillClassTemplate(string imports, string name, string extends, string implements, string properties, string customHead, string customBody, string fileHeading = null)
+        public string FillClassTemplate(string imports, string name, string extends, string implements, string properties, string customHead, string customBody, string comment, string fileHeading = null)
         {
             if (fileHeading == null) fileHeading = _headingTemplate;
-            
-            return ReplaceSpecialChars(_classTemplate)
+
+            return ReplaceSpecialChars(_classTemplate
                 .Replace(GetTag("imports"), imports)
                 .Replace(GetTag("name"), name)
                 .Replace(GetTag("extends"), extends)
@@ -66,14 +66,15 @@ namespace TypeGen.Core.Generator.Services
                 .Replace(GetTag("properties"), properties)
                 .Replace(GetTag("customHead"), customHead)
                 .Replace(GetTag("customBody"), customBody)
-                .Replace(GetTag("fileHeading"), fileHeading);
+                .Replace(GetTag("comment"), comment)
+                .Replace(GetTag("fileHeading"), fileHeading));
         }
-        
-        public string FillClassDefaultExportTemplate(string imports, string name, string exportName, string extends, string implements, string properties, string customHead, string customBody, string fileHeading = null)
+
+        public string FillClassDefaultExportTemplate(string imports, string name, string exportName, string extends, string implements, string properties, string customHead, string comment, string customBody, string fileHeading = null)
         {
             if (fileHeading == null) fileHeading = _headingTemplate;
-            
-            return ReplaceSpecialChars(_classDefaultExportTemplate)
+
+            return ReplaceSpecialChars(_classDefaultExportTemplate
                 .Replace(GetTag("imports"), imports)
                 .Replace(GetTag("name"), name)
                 .Replace(GetTag("exportName"), exportName)
@@ -82,42 +83,44 @@ namespace TypeGen.Core.Generator.Services
                 .Replace(GetTag("properties"), properties)
                 .Replace(GetTag("customHead"), customHead)
                 .Replace(GetTag("customBody"), customBody)
-                .Replace(GetTag("fileHeading"), fileHeading);
+                .Replace(GetTag("comment"), comment)
+                .Replace(GetTag("fileHeading"), fileHeading));
         }
 
-        public string FillClassPropertyTemplate(string modifiers, string name, string type, IEnumerable<string> typeUnions, string defaultValue = null)
+        public string FillClassPropertyTemplate(string modifiers, string name, string type, string comment, IEnumerable<string> typeUnions, string defaultValue = null)
         {
             type = $": {type}";
             type = ConcatenateWithTypeUnions(type, typeUnions);
-            
+
             defaultValue = string.IsNullOrWhiteSpace(defaultValue) ? "" : $" = {defaultValue}";
-            
-            return ReplaceSpecialChars(_classPropertyTemplate)
+
+            return ReplaceSpecialChars(_classPropertyTemplate
                 .Replace(GetTag("modifiers"), modifiers)
                 .Replace(GetTag("name"), name)
                 .Replace(GetTag("type"), type)
-                .Replace(GetTag("defaultValue"), defaultValue);
+                .Replace(GetTag("defaultValue"), defaultValue));
         }
 
-        public string FillInterfaceTemplate(string imports, string name, string extends, string properties, string customHead, string customBody, string fileHeading = null)
+        public string FillInterfaceTemplate(string imports, string name, string extends, string properties, string customHead, string customBody, string comment, string fileHeading = null)
         {
             if (fileHeading == null) fileHeading = _headingTemplate;
-            
-            return ReplaceSpecialChars(_interfaceTemplate)
+
+            return ReplaceSpecialChars(_interfaceTemplate
                 .Replace(GetTag("imports"), imports)
                 .Replace(GetTag("name"), name)
                 .Replace(GetTag("extends"), extends)
                 .Replace(GetTag("properties"), properties)
                 .Replace(GetTag("customHead"), customHead)
                 .Replace(GetTag("customBody"), customBody)
-                .Replace(GetTag("fileHeading"), fileHeading);
+                .Replace(GetTag("comment"), comment)
+                .Replace(GetTag("fileHeading"), fileHeading));
         }
-        
-        public string FillInterfaceDefaultExportTemplate(string imports, string name, string exportName, string extends, string properties, string customHead, string customBody, string fileHeading = null)
+
+        public string FillInterfaceDefaultExportTemplate(string imports, string name, string exportName, string extends, string properties, string customHead, string customBody, string comment, string fileHeading = null)
         {
             if (fileHeading == null) fileHeading = _headingTemplate;
-            
-            return ReplaceSpecialChars(_interfaceDefaultExportTemplate)
+
+            return ReplaceSpecialChars(_interfaceDefaultExportTemplate
                 .Replace(GetTag("imports"), imports)
                 .Replace(GetTag("name"), name)
                 .Replace(GetTag("exportName"), exportName)
@@ -125,81 +128,86 @@ namespace TypeGen.Core.Generator.Services
                 .Replace(GetTag("properties"), properties)
                 .Replace(GetTag("customHead"), customHead)
                 .Replace(GetTag("customBody"), customBody)
-                .Replace(GetTag("fileHeading"), fileHeading);
+                .Replace(GetTag("comment"), comment)
+                .Replace(GetTag("fileHeading"), fileHeading));
         }
 
-        public string FillInterfacePropertyTemplate(string modifiers, string name, string type, IEnumerable<string> typeUnions, bool isOptional)
+        public string FillInterfacePropertyTemplate(string modifiers, string name, string type, string comment, IEnumerable<string> typeUnions, bool isOptional)
         {
             type = $": {type}";
             type = ConcatenateWithTypeUnions(type, typeUnions);
-            
-            return ReplaceSpecialChars(_interfacePropertyTemplate)
+
+            return ReplaceSpecialChars(_interfacePropertyTemplate
+                .Replace(GetTag("comment"), comment)
                 .Replace(GetTag("modifiers"), modifiers)
                 .Replace(GetTag("name"), name + (isOptional ? "?" : ""))
-                .Replace(GetTag("type"), type);
+                .Replace(GetTag("type"), type));
         }
 
-        public string FillEnumTemplate(string imports, string name, string values, bool isConst, string fileHeading = null)
+        public string FillEnumTemplate(string imports, string name, string values, bool isConst, string comment, string fileHeading = null)
         {
             if (fileHeading == null) fileHeading = _headingTemplate;
-            
-            return ReplaceSpecialChars(_enumTemplate)
+
+            return ReplaceSpecialChars(_enumTemplate
                 .Replace(GetTag("imports"), imports)
                 .Replace(GetTag("name"), name)
                 .Replace(GetTag("values"), values)
+                .Replace(GetTag("comment"), comment)
                 .Replace(GetTag("modifiers"), isConst ? " const" : "")
-                .Replace(GetTag("fileHeading"), fileHeading);
+                .Replace(GetTag("fileHeading"), fileHeading));
         }
-        
-        public string FillEnumDefaultExportTemplate(string imports, string name, string values, bool isConst, string fileHeading = null)
+
+        public string FillEnumDefaultExportTemplate(string imports, string name, string values, bool isConst, string comment, string fileHeading = null)
         {
             if (fileHeading == null) fileHeading = _headingTemplate;
-            
-            return ReplaceSpecialChars(_enumDefaultExportTemplate)
+
+            return ReplaceSpecialChars(_enumDefaultExportTemplate
                 .Replace(GetTag("imports"), imports)
                 .Replace(GetTag("name"), name)
                 .Replace(GetTag("values"), values)
+                .Replace(GetTag("comment"), comment)
                 .Replace(GetTag("modifiers"), isConst ? " const" : "")
-                .Replace(GetTag("fileHeading"), fileHeading);
+                .Replace(GetTag("fileHeading"), fileHeading));
         }
 
-        public string FillEnumValueTemplate(string name, object value)
+        public string FillEnumValueTemplate(string name, object value, string comment)
         {
             char quote = GeneratorOptions.SingleQuotes ? '\'' : '"';
             string valueString = value is string str ? $@"{quote}{str}{quote}" : value.ToString();
-            
-            return ReplaceSpecialChars(_enumValueTemplate)
+
+            return ReplaceSpecialChars(_enumValueTemplate
                 .Replace(GetTag("name"), name)
-                .Replace(GetTag("value"), valueString);
+                .Replace(GetTag("comment"), comment)
+                .Replace(GetTag("value"), valueString));
         }
 
         public string FillImportTemplate(string name, string typeAlias, string path)
         {
             string aliasText = string.IsNullOrEmpty(typeAlias) ? "" : $" as {typeAlias}";
 
-            return ReplaceSpecialChars(_importTemplate)
+            return ReplaceSpecialChars(_importTemplate
                 .Replace(GetTag("name"), name)
                 .Replace(GetTag("aliasText"), aliasText)
-                .Replace(GetTag("path"), path);
+                .Replace(GetTag("path"), path));
         }
-        
+
         public string FillImportDefaultExportTemplate(string name, string path)
         {
-            return ReplaceSpecialChars(_importDefaultExportTemplate)
+            return ReplaceSpecialChars(_importDefaultExportTemplate
                 .Replace(GetTag("name"), name)
-                .Replace(GetTag("path"), path);
+                .Replace(GetTag("path"), path));
         }
 
         public string FillIndexTemplate(string exports)
         {
-            return ReplaceSpecialChars(_indexTemplate)
-                .Replace(GetTag("exports"), exports);
+            return ReplaceSpecialChars(_indexTemplate
+                .Replace(GetTag("exports"), exports));
         }
 
         public string FillIndexExportTemplate(string filename)
         {
-            return ReplaceSpecialChars(_indexExportTemplate)
-                .Replace(GetTag("filename"), filename);
+            return ReplaceSpecialChars(_indexExportTemplate
+                .Replace(GetTag("filename"), filename));
         }
 
         public string GetExtendsText(string name) => $" extends {name}";
@@ -212,7 +220,7 @@ namespace TypeGen.Core.Generator.Services
         private string ReplaceSpecialChars(string template)
         {
             string tab = GeneratorOptions.UseTabCharacter ? "\t" : StringUtils.GetTabText(GeneratorOptions.TabLength);
-            
+
             return template
                 .Replace(GetTag("tab"), tab)
                 .Replace(GetTag("quot"), GeneratorOptions.SingleQuotes ? "'" : "\"");
@@ -221,7 +229,7 @@ namespace TypeGen.Core.Generator.Services
         private static string ConcatenateWithTypeUnions(string text, IEnumerable<string> typeUnions)
         {
             if (typeUnions?.Any() == false) return text;
-            
+
             string typeUnionsText = string.Join(" | ", typeUnions);
             return text + " | " + typeUnionsText;
         }

@@ -118,6 +118,5 @@ namespace TypeGen.Core.Generator.Services
         bool UseDefaultExport(Type type);
 
         IEnumerable<string> GetTypeUnions(MemberInfo memberInfo);
-        IEnumerable<Type> GetInterfaces(Type type);
     }
 }

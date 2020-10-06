@@ -1,3 +1,3 @@
-$tg{fileHeading}export$tg{modifiers} enum $tg{name} {
+$tg{fileHeading}$tg{comment}export$tg{modifiers} enum $tg{name} {
 $tg{values}
 }

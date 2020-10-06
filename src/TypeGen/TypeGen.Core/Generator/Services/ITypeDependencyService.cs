@@ -12,8 +12,9 @@ namespace TypeGen.Core.Generator.Services
         /// Returns a distinct result (i.e. no duplicate TypeDependencyInfo instances)
         /// </summary>
         /// <param name="type"></param>
+        /// <param name="inherited"></param>
         /// <returns></returns>
         /// <exception cref="ArgumentNullException">Thrown when the type is null</exception>
-        IEnumerable<TypeDependencyInfo> GetTypeDependencies(Type type);
+        IEnumerable<TypeDependencyInfo> GetTypeDependencies(Type type, bool inherited);
     }
 }

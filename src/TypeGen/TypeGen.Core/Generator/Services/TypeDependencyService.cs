@@ -22,7 +22,7 @@ namespace TypeGen.Core.Generator.Services
             _typeService = typeService;
             _metadataReaderFactory = metadataReaderFactory;
         }
-        
+
         /// <summary>
         /// Gets all non-simple and non-collection types the given type depends on.
         /// Types of properties/fields marked with TsIgnoreAttribute will be omitted.
@@ -30,24 +30,27 @@ namespace TypeGen.Core.Generator.Services
         /// Returns a distinct result (i.e. no duplicate TypeDependencyInfo instances)
         /// </summary>
         /// <param name="type"></param>
+        /// <param name="inherited"></param>
         /// <returns></returns>
         /// <exception cref="ArgumentNullException">Thrown when the type is null</exception>
-        public IEnumerable<TypeDependencyInfo> GetTypeDependencies(Type type)
+        public IEnumerable<TypeDependencyInfo> GetTypeDependencies(Type type, bool inherited)
         {
             Requires.NotNull(type, nameof(type));
 
             var typeInfo = type.GetTypeInfo();
-            
+
             if (!typeInfo.IsClass && !typeInfo.IsInterface) return Enumerable.Empty<TypeDependencyInfo>();
 
             type = _typeService.StripNullable(type);
 
-            return GetGenericTypeDefinitionDependencies(type)
+            var ret = GetGenericTypeDefinitionDependencies(type)
                 .Concat(GetBaseTypeDependency(type))
-                .Concat(GetImplementedInterfaceTypesDependencies(type))
+                .Concat(GetImplementedInterfaceTypesDependencies(type, inherited))
                 .Concat(GetMemberTypeDependencies(type))
                 .Distinct(new TypeDependencyInfoTypeComparer<TypeDependencyInfo>())
+                .ExcludeSystemTypes()
                 .ToList();
+            return ret;
         }
 
         /// <summary>
@@ -94,18 +97,18 @@ namespace TypeGen.Core.Generator.Services
         /// Gets implemented interfaces type dependency for a type, if the interfaces types exist
         /// </summary>
         /// <param name="type"></param>
+        /// <param name="inherited"></param>
         /// <returns></returns>
-        private IEnumerable<TypeDependencyInfo> GetImplementedInterfaceTypesDependencies(Type type)
+        private IEnumerable<TypeDependencyInfo> GetImplementedInterfaceTypesDependencies(Type type, bool inherited)
         {
             if (_metadataReaderFactory.GetInstance().GetAttribute<TsIgnoreBaseAttribute>(type) != null) return Enumerable.Empty<TypeDependencyInfo>();
 
-            var baseTypes = _typeService.GetInterfaces(type);
+            var baseTypes = type.GetInterfaces(inherited);
             if (!baseTypes.Any()) return Enumerable.Empty<TypeDependencyInfo>();
 
             return baseTypes
                 .SelectMany(baseType => GetFlatTypeDependencies(baseType, null, true));
         }
-
 
         /// <summary>
         /// Gets type dependencies for the members inside a given type
@@ -136,7 +139,7 @@ namespace TypeGen.Core.Generator.Services
         private IEnumerable<TypeDependencyInfo> GetFlatTypeDependencies(Type flatType, IEnumerable<Attribute> memberAttributes = null, bool isBase = false)
         {
             if (_typeService.IsTsSimpleType(flatType) || flatType.IsGenericParameter) return Enumerable.Empty<TypeDependencyInfo>();
-            
+
             if (flatType.GetTypeInfo().IsGenericType)
             {
                 return GetGenericTypeNonDefinitionDependencies(flatType)
@@ -154,7 +157,7 @@ namespace TypeGen.Core.Generator.Services
         private IEnumerable<Type> GetGenericTypeNonDefinitionDependencies(Type type)
         {
             if (!type.GetTypeInfo().IsGenericType) throw new CoreException($"Type {type.FullName} must be a generic type");
-            
+
             List<Type> result = _typeService.IsDictionaryType(type)
                 ? new List<Type>()
                 : new List<Type> { type.GetGenericTypeDefinition() };
