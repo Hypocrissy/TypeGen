@@ -16,11 +16,14 @@ namespace TypeGen.Core.Generator.Services
     {
         private readonly ITypeService _typeService;
         private readonly IMetadataReaderFactory _metadataReaderFactory;
+        private readonly IGeneratorOptionsProvider _generatorOptionsProvider;
 
-        public TypeDependencyService(ITypeService typeService, IMetadataReaderFactory metadataReaderFactory)
+        public TypeDependencyService(ITypeService typeService, IMetadataReaderFactory metadataReaderFactory,
+            IGeneratorOptionsProvider generatorOptionsProvider)
         {
             _typeService = typeService;
             _metadataReaderFactory = metadataReaderFactory;
+            _generatorOptionsProvider = generatorOptionsProvider;
         }
 
         /// <summary>
@@ -120,7 +123,7 @@ namespace TypeGen.Core.Generator.Services
         {
             var result = new List<TypeDependencyInfo>();
 
-            IEnumerable<MemberInfo> memberInfos = type.GetTsExportableMembers(_metadataReaderFactory.GetInstance());
+            IEnumerable<MemberInfo> memberInfos = type.GetTsExportableMembers(_metadataReaderFactory.GetInstance(), _generatorOptionsProvider.GeneratorOptions);
             foreach (MemberInfo memberInfo in memberInfos)
             {
                 if (_metadataReaderFactory.GetInstance().GetAttribute<TsTypeAttribute>(memberInfo) != null) continue;

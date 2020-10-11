@@ -16,12 +16,12 @@ namespace TypeGen.Core.Test.Extensions
         /// this needs to be changed to use mocked MetadataReader
         /// </summary>
         private readonly IMetadataReader _metadataReader = new AttributeMetadataReader();
-        
-        private class PlainClass {}
-        [ExportTsClass] private class TsClass {}
-        [ExportTsInterface] private class TsInterface {}
+
+        private class PlainClass { }
+        [ExportTsClass] private class TsClass { }
+        [ExportTsInterface] private class TsInterface { }
         [ExportTsEnum] private enum TsEnum { A }
-        
+
         [Theory]
         [InlineData(typeof(PlainClass), false)]
         [InlineData(typeof(TsClass), true)]
@@ -40,7 +40,7 @@ namespace TypeGen.Core.Test.Extensions
             IEnumerable<Type> expectedResult = new[] { typeof(TsClass), typeof(TsInterface), typeof(TsEnum) };
 
             IEnumerable<Type> actualResult = types.GetExportMarkedTypes(_metadataReader);
-            
+
             Assert.Equal(expectedResult, actualResult);
         }
 
@@ -53,14 +53,14 @@ namespace TypeGen.Core.Test.Extensions
                 typeof(WithoutTsIgnore_TestClass).GetProperty("B"),
                 typeof(WithoutTsIgnore_TestClass).GetField("c")
             };
-            
+
             IEnumerable<MemberInfo> expectedResult = new MemberInfo[]
             {
                 typeof(WithoutTsIgnore_TestClass).GetField("a"),
                 typeof(WithoutTsIgnore_TestClass).GetProperty("B")
             };
 
-            IEnumerable<MemberInfo> actualResult = memberInfos.WithoutTsIgnore(_metadataReader);
+            IEnumerable<MemberInfo> actualResult = memberInfos.WithoutTsIgnore(_metadataReader, null);
             Assert.Equal(expectedResult, actualResult);
         }
 
@@ -81,7 +81,7 @@ namespace TypeGen.Core.Test.Extensions
                 typeof(WithMembersFilter_TestClass).GetField("c"),
                 typeof(WithMembersFilter_TestClass).GetField("d", BindingFlags.NonPublic | BindingFlags.Instance)
             };
-            
+
             IEnumerable<MemberInfo> expectedResult = new[]
             {
                 typeof(WithMembersFilter_TestClass).GetField("a"),
@@ -92,7 +92,7 @@ namespace TypeGen.Core.Test.Extensions
             IEnumerable<FieldInfo> actualResult = fieldInfos.WithMembersFilter();
             Assert.Equal(expectedResult, actualResult);
         }
-        
+
         [Fact]
         public void WithMembersFilter_PropertyInfoOverload_Test()
         {
@@ -103,7 +103,7 @@ namespace TypeGen.Core.Test.Extensions
                 typeof(WithMembersFilter_TestClass).GetProperty("C"),
                 typeof(WithMembersFilter_TestClass).GetProperty("D", BindingFlags.NonPublic | BindingFlags.Instance)
             };
-            
+
             IEnumerable<PropertyInfo> expectedResult = new[]
             {
                 typeof(WithMembersFilter_TestClass).GetProperty("A"),
@@ -121,7 +121,7 @@ namespace TypeGen.Core.Test.Extensions
             public static DateTime b;
             [TsIgnore] public int c;
             private string d;
-            
+
             public string A { get; set; }
             public static DateTime B { get; set; }
             [TsIgnore] public int C { get; set; }

@@ -165,5 +165,6 @@ namespace TypeGen.Core.Generator
         /// Classes will be generated as Interfaces
         /// </summary>
         public bool ClassAsInterface { get; set; } = false;
+        public IEnumerable<string> IgnoreAttributes { get; set; }
     }
 }

@@ -1,5 +1,4 @@
 using System;
-using System.Collections;
 using System.Collections.Generic;
 using System.Linq;
 using System.Reflection;
@@ -13,6 +12,12 @@ namespace TypeGen.Core.Generator.Services
 {
     internal class GenerationSpecProvider
     {
+        private readonly IGeneratorOptionsProvider _generatorOptionsProvider;
+        public GenerationSpecProvider(IGeneratorOptionsProvider generatorOptionsProvider)
+        {
+            _generatorOptionsProvider = generatorOptionsProvider;
+        }
+
         public GenerationSpec GetGenerationSpec(IEnumerable<Assembly> assemblies)
         {
             Requires.NotNull(assemblies, nameof(assemblies));
@@ -38,7 +43,7 @@ namespace TypeGen.Core.Generator.Services
         public GenerationSpec GetGenerationSpec(Type type)
         {
             Requires.NotNull(type, nameof(type));
-            
+
             var metadataReader = new AttributeMetadataReader();
             var generationSpec = new GenerationSpecProviderGenerationSpec();
 
@@ -58,15 +63,15 @@ namespace TypeGen.Core.Generator.Services
             IEnumerable<Attribute> additionalAttributes = metadataReader.GetAttributes(type)
                 .Where(a => !(a is ExportAttribute))
                 .OfType<Attribute>();
-            
+
             var typeSpec = new TypeSpec(exportAttribute);
-            
+
             foreach (Attribute additionalAttribute in additionalAttributes)
             {
                 typeSpec.AdditionalAttributes.Add(additionalAttribute);
             }
-            
-            foreach (MemberInfo memberInfo in type.GetTsExportableMembers(metadataReader, false))
+
+            foreach (MemberInfo memberInfo in type.GetTsExportableMembers(metadataReader, _generatorOptionsProvider.GeneratorOptions, false))
             {
                 IEnumerable<Attribute> attributes = metadataReader
                     .GetAttributes(memberInfo)

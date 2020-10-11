@@ -1,12 +1,10 @@
 ﻿using Namotion.Reflection;
 using System;
-using System.Collections;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using System.Reflection;
-using System.Runtime.CompilerServices;
 using System.Threading.Tasks;
 using TypeGen.Core.Extensions;
 using TypeGen.Core.Generator.Services;
@@ -70,7 +68,7 @@ namespace TypeGen.Core.Generator
             _fileSystem = new FileSystem();
             _metadataReaderFactory = new MetadataReaderFactory();
             _typeService = new TypeService(_metadataReaderFactory, generatorOptionsProvider);
-            _typeDependencyService = new TypeDependencyService(_typeService, _metadataReaderFactory);
+            _typeDependencyService = new TypeDependencyService(_typeService, _metadataReaderFactory, generatorOptionsProvider);
             _templateService = new TemplateService(internalStorage, generatorOptionsProvider);
 
             _tsContentGenerator = new TsContentGenerator(_typeDependencyService,
@@ -366,7 +364,7 @@ namespace TypeGen.Core.Generator
         {
             Requires.NotNullOrEmpty(assemblies, nameof(assemblies));
 
-            var generationSpecProvider = new GenerationSpecProvider();
+            var generationSpecProvider = new GenerationSpecProvider(new GeneratorOptionsProvider { GeneratorOptions = Options });
             GenerationSpec generationSpec = generationSpecProvider.GetGenerationSpec(assemblies);
 
             return Generate(new[] { generationSpec });
@@ -391,7 +389,7 @@ namespace TypeGen.Core.Generator
         {
             Requires.NotNull(type, nameof(type));
 
-            var generationSpecProvider = new GenerationSpecProvider();
+            var generationSpecProvider = new GenerationSpecProvider(new GeneratorOptionsProvider { GeneratorOptions = Options });
             GenerationSpec generationSpec = generationSpecProvider.GetGenerationSpec(type);
 
             return Generate(new[] { generationSpec });
@@ -572,7 +570,7 @@ namespace TypeGen.Core.Generator
         private string GetClassPropertiesText(Type type)
         {
             var propertiesText = "";
-            IEnumerable<MemberInfo> memberInfos = type.GetTsExportableMembers(_metadataReaderFactory.GetInstance());
+            IEnumerable<MemberInfo> memberInfos = type.GetTsExportableMembers(_metadataReaderFactory.GetInstance(), Options);
 
             // create TypeScript source code for properties' definition
 
@@ -626,7 +624,7 @@ namespace TypeGen.Core.Generator
         private string GetInterfacePropertiesText(Type type)
         {
             var propertiesText = "";
-            IEnumerable<MemberInfo> memberInfos = type.GetTsExportableMembers(_metadataReaderFactory.GetInstance());
+            IEnumerable<MemberInfo> memberInfos = type.GetTsExportableMembers(_metadataReaderFactory.GetInstance(), Options);
 
             // create TypeScript source code for properties' definition
 

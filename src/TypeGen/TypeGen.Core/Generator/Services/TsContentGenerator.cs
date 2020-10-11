@@ -207,7 +207,7 @@ namespace TypeGen.Core.Generator.Services
 
         private IEnumerable<string> GetCustomImportsFromMembers(Type type)
         {
-            IEnumerable<MemberInfo> members = type.GetTsExportableMembers(_metadataReaderFactory.GetInstance());
+            IEnumerable<MemberInfo> members = type.GetTsExportableMembers(_metadataReaderFactory.GetInstance(), _generatorOptionsProvider.GeneratorOptions);
 
             IEnumerable<TsTypeAttribute> typeAttributes = members
                 .Select(memberInfo => _metadataReaderFactory.GetInstance().GetAttribute<TsTypeAttribute>(memberInfo))

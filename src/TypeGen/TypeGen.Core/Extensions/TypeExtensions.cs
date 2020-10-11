@@ -3,6 +3,7 @@ using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Reflection;
+using TypeGen.Core.Generator;
 using TypeGen.Core.Generator.Services;
 using TypeGen.Core.Metadata;
 using TypeGen.Core.TypeAnnotations;
@@ -48,12 +49,12 @@ namespace TypeGen.Core.Extensions
         /// <param name="memberInfos"></param>
         /// <param name="reader"></param>
         /// <returns></returns>
-        public static IEnumerable<T> WithoutTsIgnore<T>(this IEnumerable<T> memberInfos, IMetadataReader reader) where T : MemberInfo
+        public static IEnumerable<T> WithoutTsIgnore<T>(this IEnumerable<T> memberInfos, IMetadataReader reader, IEnumerable<string> ignoreAttributes) where T : MemberInfo
         {
             Requires.NotNull(memberInfos, nameof(memberInfos));
             Requires.NotNull(reader, nameof(reader));
 
-            var ignoreAttributes = new string[] { nameof(TsIgnoreAttribute), nameof(JsonIgnoreAttribute), "Sensitive", "IgnoreDataMember" };
+            ignoreAttributes = new string[] { nameof(TsIgnoreAttribute) }.Concat(ignoreAttributes ?? Enumerable.Empty<string>());
             return memberInfos.Where(i =>
             {
                 var attrTypes = i.GetCustomAttributes(true).Select(x => x.GetType()).ToList();
@@ -152,7 +153,7 @@ namespace TypeGen.Core.Extensions
         /// <param name="metadataReader"></param>
         /// <param name="withoutTsIgnore"></param>
         /// <returns></returns>
-        public static IEnumerable<MemberInfo> GetTsExportableMembers(this Type type, IMetadataReader metadataReader, bool withoutTsIgnore = true)
+        public static IEnumerable<MemberInfo> GetTsExportableMembers(this Type type, IMetadataReader metadataReader, GeneratorOptions options, bool withoutTsIgnore = true)
         {
             Requires.NotNull(type, nameof(type));
             TypeInfo typeInfo = type.GetTypeInfo();
@@ -167,8 +168,8 @@ namespace TypeGen.Core.Extensions
 
             if (withoutTsIgnore)
             {
-                fieldInfos = fieldInfos.WithoutTsIgnore(metadataReader);
-                propertyInfos = propertyInfos.WithoutTsIgnore(metadataReader);
+                fieldInfos = fieldInfos.WithoutTsIgnore(metadataReader, options.IgnoreAttributes);
+                propertyInfos = propertyInfos.WithoutTsIgnore(metadataReader, options.IgnoreAttributes);
             }
 
             var union = fieldInfos.Union(propertyInfos);
