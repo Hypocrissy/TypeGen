@@ -1,6 +1,7 @@
 ﻿using Namotion.Reflection;
 using System;
 using System.Collections;
+using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
@@ -28,6 +29,11 @@ namespace TypeGen.Core.Generator
         public event EventHandler<FileContentGeneratedArgs> FileContentGenerated;
 
         /// <summary>
+        /// An event that fires when all type dependencies are resolved
+        /// </summary>
+        public event EventHandler<AfterDependencyResolveArgs> AfterDependencyResolved;
+
+        /// <summary>
         /// A logger instance used to log messages raised by a Generator instance
         /// </summary>
         public ILogger Logger { get; }
@@ -45,13 +51,13 @@ namespace TypeGen.Core.Generator
         private readonly IFileSystem _fileSystem;
 
         // keeps track of what types have been generated in the current session
-        private readonly GenerationContext _generationContext;
+        // private readonly GenerationContext _generationContext;
 
         public Generator(GeneratorOptions options, ILogger logger = null)
         {
             Requires.NotNull(options, nameof(options));
 
-            _generationContext = new GenerationContext();
+            //_generationContext = new GenerationContext();
             FileContentGenerated += OnFileContentGenerated;
 
             Options = options;
@@ -120,9 +126,9 @@ namespace TypeGen.Core.Generator
             FileContentGenerated -= OnFileContentGenerated;
         }
 
-        private void InitializeGeneration(GenerationSpec generationSpec)
+        private void InitializeGeneration(IDictionary<Type, TypeSpec> spec)
         {
-            _metadataReaderFactory.GenerationSpec = generationSpec;
+            _metadataReaderFactory.Specs = spec;
         }
 
         /// <summary>
@@ -130,7 +136,7 @@ namespace TypeGen.Core.Generator
         /// </summary>
         /// <param name="generationSpecs"></param>
         /// <returns>Generated TypeScript file paths (relative to the Options.BaseOutputDirectory)</returns>
-        public Task<IEnumerable<string>> GenerateAsync(IEnumerable<GenerationSpec> generationSpecs)
+        public Task<GenerationResult> GenerateAsync(IEnumerable<GenerationSpec> generationSpecs)
         {
             return Task.Run(() => Generate(generationSpecs));
         }
@@ -140,52 +146,97 @@ namespace TypeGen.Core.Generator
         /// </summary>
         /// <param name="generationSpecs"></param>
         /// <returns>Generated TypeScript file paths (relative to the Options.BaseOutputDirectory)</returns>
-        public IEnumerable<string> Generate(IEnumerable<GenerationSpec> generationSpecs)
+        public GenerationResult Generate(IEnumerable<GenerationSpec> generationSpecs)
         {
             Requires.NotNullOrEmpty(generationSpecs, nameof(generationSpecs));
 
-            var files = new List<string>();
+            var ret = new GenerationResult();
 
-            // generate types
+            //_generationContext.InitializeGroupGeneratedTypes();
 
-            _generationContext.InitializeGroupGeneratedTypes();
+            //OnBeforeGeneration
+            Parallel.ForEach(generationSpecs, (generationSpec) =>
+             {
+                 generationSpec.OnBeforeGeneration(new OnBeforeGenerationArgs(Options));
+             });
 
+            //Merge TypeSpecs
+            var specs = new Dictionary<Type, TypeSpec>();
             foreach (GenerationSpec generationSpec in generationSpecs)
             {
-                InitializeGeneration(generationSpec);
-                generationSpec.OnBeforeGeneration(new OnBeforeGenerationArgs(Options));
-
-                foreach (KeyValuePair<Type, TypeSpec> kvp in generationSpec.TypeSpecs)
+                //add all parameter and return types to specs
+                foreach (var methodInfo in generationSpec.MethodSpecs.Keys)
                 {
-                    files.AddRange(GenerateTypeInit(kvp.Key));
+                    generationSpec.AddType(methodInfo.ReturnParameter.ParameterType);
+                    foreach (var parameter in methodInfo.GetParameters())
+                        generationSpec.AddType(parameter.ParameterType);
                 }
+
+                specs.Merge(generationSpec.TypeSpecs);
             }
+            InitializeGeneration(specs);
 
-            files = files.Distinct().ToList();
+            //Add Dependencies
+            var specDependencies = new ConcurrentDictionary<Type, TypeSpec>();
+            Parallel.ForEach(specs, (spec) =>
+            {
+                AddTypeDependencies(spec.Key, spec.Value, specs, specDependencies);
+            });
+            specs.Merge(specDependencies);
+            AfterDependencyResolved?.Invoke(this, new AfterDependencyResolveArgs(specs));
 
-            _generationContext.ClearGroupGeneratedTypes();
+            //Generate Files
+            var typesToGenerate = specs.Where(x => !(_typeService.IsTsSimpleType(x.Key) ||
+                        _typeService.IsCollectionType(x.Key) ||
+                        _typeService.IsDictionaryType(x.Key) ||
+                        x.Key.IsSystemType()))
+                .Select(x => x.Key.AsGenericTypeDefinition())
+                .Distinct()
+                .ToList();
 
-            // generate barrels
+            //TODO Types to generate EVENT!
+
+            var typeFiles = new ConcurrentBag<string>();
+            Parallel.ForEach(typesToGenerate, (type) =>
+            {
+                var file = GenerateType(type);
+                if (!file.IsNullOrEmpty())
+                    typeFiles.Add(file);
+            });
+
+            var distfiles = typeFiles.Distinct().ToList();
+            if (distfiles.Count != typeFiles.Count())
+            {
+                throw new CoreException("distfiles != files");
+            }
+            ret.Types = distfiles;
+
+            //_generationContext.ClearGroupGeneratedTypes();
+
+            //generate barrels
 
             if (Options.CreateIndexFile)
             {
-                files.AddRange(GenerateIndexFile(files));
+                ret.Index = GenerateIndexFile(typeFiles);
             }
 
-            foreach (GenerationSpec generationSpec in generationSpecs)
+            Parallel.ForEach(generationSpecs, (generationSpec) =>
             {
-                generationSpec.OnBeforeBarrelGeneration(new OnBeforeBarrelGenerationArgs(Options, files));
-            }
+                generationSpec.OnBeforeBarrelGeneration(new OnBeforeBarrelGenerationArgs(Options, typeFiles));
+            });
 
-            foreach (GenerationSpec generationSpec in generationSpecs)
+            var barrelFiles = new ConcurrentBag<string>();
+            Parallel.ForEach(generationSpecs, (generationSpec) =>
             {
-                foreach (BarrelSpec barrelSpec in generationSpec.BarrelSpecs)
+                Parallel.ForEach(generationSpec.BarrelSpecs, (barrelSpec) =>
                 {
-                    files.AddRange(GenerateBarrel(barrelSpec));
-                }
-            }
+                    foreach (var barrelFile in GenerateBarrel(barrelSpec))
+                        barrelFiles.Add(barrelFile);
+                });
+            });
+            ret.Barrels = barrelFiles.ToList();
 
-            return files;
+            return ret;
         }
 
         private IEnumerable<string> GenerateBarrel(BarrelSpec barrelSpec)
@@ -226,7 +277,7 @@ namespace TypeGen.Core.Generator
         /// </summary>
         /// <param name="generatedFiles"></param>
         /// <returns>Generated TypeScript file paths (relative to the Options.BaseOutputDirectory)</returns>
-        private IEnumerable<string> GenerateIndexFile(IEnumerable<string> generatedFiles)
+        private string GenerateIndexFile(IEnumerable<string> generatedFiles)
         {
             var typeScriptFileExtension = "";
             if (!string.IsNullOrEmpty(Options.TypeScriptFileExtension))
@@ -244,28 +295,7 @@ namespace TypeGen.Core.Generator
             string filename = "index" + typeScriptFileExtension;
             FileContentGenerated?.Invoke(this, new FileContentGeneratedArgs(null, Path.Combine(Options.BaseOutputDirectory, filename), content));
 
-            return new[] { filename };
-        }
-
-        private IEnumerable<string> GenerateTypeInit(Type type)
-        {
-            IEnumerable<string> files = Enumerable.Empty<string>();
-
-            _generationContext.InitializeTypeGeneratedTypes();
-            _generationContext.Add(type);
-
-            if (_generationContext.IsGroupContext())
-            {
-                files = GenerateType(type);
-            }
-            else
-            {
-                ExecuteWithTypeContextLogging(() => { files = GenerateType(type); });
-            }
-
-            _generationContext.ClearTypeGeneratedTypes();
-
-            return files.Distinct();
+            return filename;
         }
 
         /// <summary>
@@ -274,20 +304,15 @@ namespace TypeGen.Core.Generator
         /// </summary>
         /// <param name="type"></param>
         /// <returns>Generated TypeScript file paths (relative to the Options.BaseOutputDirectory)</returns>
-        private IEnumerable<string> GenerateType(Type type)
+        private string GenerateType(Type type)
         {
             var classAttribute = _metadataReaderFactory.GetInstance().GetAttribute<ExportTsClassAttribute>(type);
             var interfaceAttribute = _metadataReaderFactory.GetInstance().GetAttribute<ExportTsInterfaceAttribute>(type);
             var enumAttribute = _metadataReaderFactory.GetInstance().GetAttribute<ExportTsEnumAttribute>(type);
 
-            if (classAttribute != null)
+            if (classAttribute != null || interfaceAttribute != null)
             {
-                return GenerateClass(type, classAttribute);
-            }
-
-            if (interfaceAttribute != null)
-            {
-                return GenerateInterface(type, interfaceAttribute);
+                return GenerateClassOrInterface(type, (classAttribute as ExportAttribute) ?? interfaceAttribute);
             }
 
             if (enumAttribute != null)
@@ -295,7 +320,9 @@ namespace TypeGen.Core.Generator
                 return GenerateEnum(type, enumAttribute);
             }
 
-            return GenerateNotMarked(type, Options.BaseOutputDirectory);
+            return string.Empty;
+
+            //throw new CoreException($"Generated type must be either a C# class, interface or enum. Error when generating type {type.FullName}");
         }
 
         /// <summary>
@@ -303,7 +330,7 @@ namespace TypeGen.Core.Generator
         /// </summary>
         /// <param name="assembly"></param>
         /// <returns>Generated TypeScript file paths (relative to the Options.BaseOutputDirectory)</returns>
-        public Task<IEnumerable<string>> GenerateAsync(Assembly assembly)
+        public Task<GenerationResult> GenerateAsync(Assembly assembly)
         {
             return Task.Run(() => Generate(assembly));
         }
@@ -313,7 +340,7 @@ namespace TypeGen.Core.Generator
         /// </summary>
         /// <param name="assembly"></param>
         /// <returns>Generated TypeScript file paths (relative to the Options.BaseOutputDirectory)</returns>
-        public IEnumerable<string> Generate(Assembly assembly)
+        public GenerationResult Generate(Assembly assembly)
         {
             Requires.NotNull(assembly, nameof(assembly));
             return Generate(new[] { assembly });
@@ -324,7 +351,7 @@ namespace TypeGen.Core.Generator
         /// </summary>
         /// <param name="assemblies"></param>
         /// <returns>Generated TypeScript file paths (relative to the Options.BaseOutputDirectory)</returns>
-        public Task<IEnumerable<string>> GenerateAsync(IEnumerable<Assembly> assemblies)
+        public Task<GenerationResult> GenerateAsync(IEnumerable<Assembly> assemblies)
         {
             return Task.Run(() => Generate(assemblies));
         }
@@ -334,7 +361,7 @@ namespace TypeGen.Core.Generator
         /// </summary>
         /// <param name="assemblies"></param>
         /// <returns>Generated TypeScript file paths (relative to the Options.BaseOutputDirectory)</returns>
-        public IEnumerable<string> Generate(IEnumerable<Assembly> assemblies)
+        public GenerationResult Generate(IEnumerable<Assembly> assemblies)
         {
             Requires.NotNullOrEmpty(assemblies, nameof(assemblies));
 
@@ -349,7 +376,7 @@ namespace TypeGen.Core.Generator
         /// </summary>
         /// <param name="type"></param>
         /// <returns>Generated TypeScript file paths (relative to the Options.BaseOutputDirectory)</returns>
-        public Task<IEnumerable<string>> GenerateAsync(Type type)
+        public Task<GenerationResult> GenerateAsync(Type type)
         {
             return Task.Run(() => Generate(type));
         }
@@ -359,7 +386,7 @@ namespace TypeGen.Core.Generator
         /// </summary>
         /// <param name="type"></param>
         /// <returns>Generated TypeScript file paths (relative to the Options.BaseOutputDirectory)</returns>
-        public IEnumerable<string> Generate(Type type)
+        public GenerationResult Generate(Type type)
         {
             Requires.NotNull(type, nameof(type));
 
@@ -370,118 +397,90 @@ namespace TypeGen.Core.Generator
         }
 
         /// <summary>
-        /// Generates TypeScript files for types that are not marked with an ExportTs... attribute
+        /// Generates type dependencies' for a given type
         /// </summary>
         /// <param name="type"></param>
-        /// <param name="outputDirectory"></param>
-        /// <returns>Generated TypeScript file paths (relative to the Options.BaseOutputDirectory)</returns>
-        private IEnumerable<string> GenerateNotMarked(Type type, string outputDirectory)
+        /// <param name="typeSpec"></param>
+        /// <param name="typeSpecs"></param>
+        /// <param name="typeSpecsDependencies"></param>
+        private void AddTypeDependencies(Type type, TypeSpec typeSpec,
+            IDictionary<Type, TypeSpec> typeSpecs, ConcurrentDictionary<Type, TypeSpec> typeSpecsDependencies)
         {
-            var typeInfo = type.GetTypeInfo();
-            if (typeInfo.IsClass)
-            {
-                return GenerateClass(type, new ExportTsClassAttribute { OutputDir = outputDirectory });
-            }
+            var typeDependencies = _typeDependencyService.GetTypeDependencies(type, true);
 
-            if (typeInfo.IsInterface)
+            foreach (var typeDependencyInfo in typeDependencies)
             {
-                return GenerateInterface(type, new ExportTsInterfaceAttribute { OutputDir = outputDirectory });
-            }
+                var dependencyType = typeDependencyInfo.Type;
 
-            if (typeInfo.IsEnum)
-            {
-                return GenerateEnum(type, new ExportTsEnumAttribute { OutputDir = outputDirectory });
-            }
+                if (!typeSpecs.ContainsKey(dependencyType))
+                {
+                    if (typeSpecsDependencies.TryAdd(dependencyType, null))
+                    {
+                        var dependencyTypeSpec = TypeSpecFactory.CreateTypeSpec(dependencyType, typeSpec.ExportAttribute?.OutputDir);
+                        typeSpecsDependencies[dependencyType] = dependencyTypeSpec;
 
-            throw new CoreException($"Generated type must be either a C# class, interface or enum. Error when generating type {type.FullName}");
+                        AddTypeDependencies(dependencyType, dependencyTypeSpec, typeSpecs, typeSpecsDependencies);
+                    }
+                }
+            }
         }
 
-        /// <summary>
-        /// Generates a TypeScript class file from a class type
-        /// </summary>
-        /// <param name="type"></param>
-        /// <param name="classAttribute"></param>
-        /// <returns>Generated TypeScript file paths (relative to the Options.BaseOutputDirectory)</returns>
-        private IEnumerable<string> GenerateClass(Type type, ExportTsClassAttribute classAttribute)
-        {
-            return GenerateClassOrInterface(type, classAttribute, null);
-        }
-
-        /// <summary>
-        /// Generates a TypeScript interface file from a class type
-        /// </summary>
-        /// <param name="type"></param>
-        /// <param name="interfaceAttribute"></param>
-        /// <returns>Generated TypeScript file paths (relative to the Options.BaseOutputDirectory)</returns>
-        private IEnumerable<string> GenerateInterface(Type type, ExportTsInterfaceAttribute interfaceAttribute)
-        {
-            return GenerateClassOrInterface(type, null, interfaceAttribute);
-        }
-
-        private IEnumerable<string> GenerateClassOrInterface(Type type, ExportTsClassAttribute classAttribute, ExportTsInterfaceAttribute interfaceAttribute)
+        private string GenerateClassOrInterface(Type type, ExportAttribute attribute)
         {
             if (Options.ClassAsInterface)
             {
-                interfaceAttribute ??= new ExportTsInterfaceAttribute { OutputDir = classAttribute.OutputDir };
-                classAttribute = null;
+                attribute = (attribute as ExportTsInterfaceAttribute) ?? new ExportTsInterfaceAttribute { OutputDir = attribute.OutputDir };
             }
 
-            string outputDir = classAttribute != null ? classAttribute.OutputDir : interfaceAttribute.OutputDir;
-            IEnumerable<string> dependenciesGenerationResult = GenerateTypeDependencies(type, outputDir);
-
-            // get text for sections
-
-            var tsCustomBaseAttribute = _metadataReaderFactory.GetInstance().GetAttribute<TsCustomBaseAttribute>(type);
-            var extendsText = "";
-
-            if (interfaceAttribute != null)
-            {
-                // this is an interface, generate extends for an interface.
-                extendsText = _tsContentGenerator.GetExtendsForInterfacesText(type);
-            }
-            else if (tsCustomBaseAttribute != null)
-            {
-                extendsText = string.IsNullOrEmpty(tsCustomBaseAttribute.Base) ? "" : _templateService.GetExtendsText(tsCustomBaseAttribute.Base);
-            }
-            else if (_metadataReaderFactory.GetInstance().GetAttribute<TsIgnoreBaseAttribute>(type) == null)
-            {
-                extendsText = _tsContentGenerator.GetExtendsText(type);
-            }
-
-            string importsText = _tsContentGenerator.GetImportsText(type, outputDir);
-            string propertiesText = classAttribute != null ? GetClassPropertiesText(type) : GetInterfacePropertiesText(type);
+            var outputDir = attribute.OutputDir;
 
             // generate the file content
-
-            string tsTypeName = _typeService.GetTsTypeName(type, true);
-            string tsTypeNameFirstPart = tsTypeName.RemoveTypeGenericComponent();
-            string filePath = GetFilePath(type, outputDir);
-            string filePathRelative = GetRelativeFilePath(type, outputDir);
-            string customHead = _tsContentGenerator.GetCustomHead(filePath);
-            string customBody = _tsContentGenerator.GetCustomBody(filePath, Options.TabLength);
+            var importsText = _tsContentGenerator.GetImportsText(type, outputDir);
+            var tsTypeName = _typeService.GetTsTypeName(type, true);
+            var tsTypeNameFirstPart = tsTypeName.RemoveTypeGenericComponent();
+            var filePath = GetFilePath(type, outputDir);
+            var filePathRelative = GetRelativeFilePath(type, outputDir);
+            var customHead = _tsContentGenerator.GetCustomHead(filePath);
+            var customBody = _tsContentGenerator.GetCustomBody(filePath, Options.TabLength);
 
             string content;
-
-            if (classAttribute != null)
+            if (attribute is ExportTsClassAttribute)
             {
-                //only classes can implement
                 string implementsText = _tsContentGenerator.GetImplementsText(type);
+                var propertiesText = GetClassPropertiesText(type);
+
+                var tsCustomBaseAttribute = _metadataReaderFactory.GetInstance().GetAttribute<TsCustomBaseAttribute>(type);
+                var extendsText = string.Empty;
+                if (tsCustomBaseAttribute != null)
+                {
+                    extendsText = string.IsNullOrEmpty(tsCustomBaseAttribute.Base) ? "" : _templateService.GetExtendsText(tsCustomBaseAttribute.Base);
+                }
+                else if (_metadataReaderFactory.GetInstance().GetAttribute<TsIgnoreBaseAttribute>(type) == null)
+                {
+                    extendsText = _tsContentGenerator.GetExtendsText(type);
+                }
 
                 content = _typeService.UseDefaultExport(type) ?
                     _templateService.FillClassDefaultExportTemplate(importsText, tsTypeName, tsTypeNameFirstPart, extendsText, implementsText, propertiesText, customHead, customBody, GenerateComment(type), Options.FileHeading) :
                     _templateService.FillClassTemplate(importsText, tsTypeName, extendsText, implementsText, propertiesText, customHead, customBody, GenerateComment(type), Options.FileHeading);
             }
-            else
+            else if (attribute is ExportTsInterfaceAttribute)
             {
+                var extendsText = _tsContentGenerator.GetExtendsForInterfacesText(type);
+                var propertiesText = GetInterfacePropertiesText(type);
+
                 content = _typeService.UseDefaultExport(type) ?
                     _templateService.FillInterfaceDefaultExportTemplate(importsText, tsTypeName, tsTypeNameFirstPart, extendsText, propertiesText, customHead, customBody, GenerateComment(type), Options.FileHeading) :
                     _templateService.FillInterfaceTemplate(importsText, tsTypeName, extendsText, propertiesText, customHead, customBody, GenerateComment(type), Options.FileHeading);
             }
+            else
+            {
+                throw new CoreException($"Type {type.Name} has neither an ExportTsClassAttribute or an ExportTsInterfaceAttribute!");
+            }
 
             // write TypeScript file
-
             FileContentGenerated?.Invoke(this, new FileContentGeneratedArgs(type, filePath, content));
-            return new[] { filePathRelative }.Concat(dependenciesGenerationResult).ToList();
+            return filePathRelative;
         }
 
         /// <summary>
@@ -490,12 +489,11 @@ namespace TypeGen.Core.Generator
         /// <param name="type"></param>
         /// <param name="enumAttribute"></param>
         /// <returns>Generated TypeScript file paths (relative to the Options.BaseOutputDirectory)</returns>
-        private IEnumerable<string> GenerateEnum(Type type, ExportTsEnumAttribute enumAttribute)
+        private string GenerateEnum(Type type, ExportTsEnumAttribute enumAttribute)
         {
             string valuesText = GetEnumMembersText(type);
 
             // create TypeScript source code for the enum
-
             string tsEnumName = _typeService.GetTsTypeName(type, true);
             string filePath = GetFilePath(type, enumAttribute.OutputDir);
             string filePathRelative = GetRelativeFilePath(type, enumAttribute.OutputDir);
@@ -505,9 +503,8 @@ namespace TypeGen.Core.Generator
                 _templateService.FillEnumTemplate("", tsEnumName, valuesText, enumAttribute.IsConst, GenerateComment(type), Options.FileHeading);
 
             // write TypeScript file
-
             FileContentGenerated?.Invoke(this, new FileContentGeneratedArgs(type, filePath, enumText));
-            return new[] { filePathRelative };
+            return filePathRelative;
         }
 
         private bool IsStaticTsProperty(MemberInfo memberInfo)
@@ -678,47 +675,6 @@ namespace TypeGen.Core.Generator
         }
 
         /// <summary>
-        /// Generates type dependencies' files for a given type
-        /// </summary>
-        /// <param name="type"></param>
-        /// <param name="outputDir"></param>
-        /// <returns>Generated TypeScript file paths (relative to the Options.BaseOutputDirectory)</returns>
-        private IEnumerable<string> GenerateTypeDependencies(Type type, string outputDir)
-        {
-            var generatedFiles = new List<string>();
-            IEnumerable<TypeDependencyInfo> typeDependencies = _typeDependencyService.GetTypeDependencies(type, true);
-
-            foreach (TypeDependencyInfo typeDependencyInfo in typeDependencies)
-            {
-                Type typeDependency = typeDependencyInfo.Type;
-
-                // dependency type TypeScript file generation
-
-                // dependency HAS an ExportTsX attribute (AND hasn't been generated yet)
-                if (typeDependency.HasExportAttribute(_metadataReaderFactory.GetInstance()) && !_generationContext.HasBeenGeneratedForGroup(typeDependency))
-                {
-                    _generationContext.Add(typeDependency);
-                    generatedFiles.AddRange(GenerateTypeInit(typeDependency));
-                }
-
-                // dependency DOESN'T HAVE an ExportTsX attribute (AND hasn't been generated for the currently generated type yet)
-                if (!typeDependency.HasExportAttribute(_metadataReaderFactory.GetInstance()) && !_generationContext.HasBeenGeneratedForGroup(typeDependency))
-                {
-                    var defaultOutputAttribute = typeDependencyInfo.MemberAttributes
-                        ?.FirstOrDefault(a => a is TsDefaultTypeOutputAttribute)
-                        as TsDefaultTypeOutputAttribute;
-
-                    string defaultOutputDir = defaultOutputAttribute?.OutputDir ?? outputDir;
-
-                    _generationContext.Add(typeDependency);
-                    generatedFiles.AddRange(GenerateNotMarked(typeDependency, defaultOutputDir));
-                }
-            }
-
-            return generatedFiles;
-        }
-
-        /// <summary>
         /// Gets the output TypeScript file path based on a type.
         /// The path is relative to the base output directory.
         /// </summary>
@@ -751,28 +707,6 @@ namespace TypeGen.Core.Generator
         {
             string fileName = GetRelativeFilePath(type, outputDir);
             return Path.Combine(Options.BaseOutputDirectory?.EnsurePostfix("/") ?? "", fileName);
-        }
-
-        /// <summary>
-        /// Executes the passed action and adds additional info about the currently generated types in case of a CoreException
-        /// </summary>
-        /// <param name="action"></param>
-        private void ExecuteWithTypeContextLogging(Action action)
-        {
-            try
-            {
-                action();
-            }
-            catch (CoreException e)
-            {
-                if (_generationContext.TypeGeneratedTypes != null)
-                {
-                    throw new CoreException(e.Message + "; inside type: " +
-                                            string.Join(", in ", _generationContext.TypeGeneratedTypes.Reverse().Select(t => t.FullName)));
-                }
-
-                throw;
-            }
         }
 
         private static string RemoveLastLineEnding(string propertiesText)
@@ -816,5 +750,52 @@ namespace TypeGen.Core.Generator
                 .Replace('\r', ' ')
                 .Replace('\n', ' ');
         }
+    }
+
+    internal static class TypeSpecFactory
+    {
+        public static TypeSpec CreateTypeSpec(Type type, string outputDirectory = null, bool isConst = false)
+        {
+            var typeInfo = type.GetTypeInfo();
+            if (typeInfo.IsClass)
+            {
+                return CreateClassTypeSpec(type, outputDirectory);
+            }
+
+            if (typeInfo.IsInterface)
+            {
+                return CreateInterfaceTypeSpec(type, outputDirectory);
+            }
+
+            if (typeInfo.IsEnum)
+            {
+                return CreateEnumTypeSpec(type, outputDirectory, isConst);
+            }
+
+            return new TypeSpec(null);
+        }
+
+        public static TypeSpec CreateClassTypeSpec(Type type, string outputDirectory = null)
+        {
+            return new TypeSpec(new ExportTsClassAttribute { OutputDir = outputDirectory });
+        }
+
+        public static TypeSpec CreateInterfaceTypeSpec(Type type, string outputDirectory = null)
+        {
+            return new TypeSpec(new ExportTsInterfaceAttribute { OutputDir = outputDirectory });
+        }
+
+        public static TypeSpec CreateEnumTypeSpec(Type type, string outputDirectory = null, bool isConst = false)
+        {
+            return new TypeSpec(new ExportTsEnumAttribute { OutputDir = outputDirectory, IsConst = isConst });
+        }
+    }
+
+    public class GenerationResult
+    {
+        public List<string> Types { get; set; }
+        public List<string> Services { get; set; }
+        public List<string> Barrels { get; set; }
+        public string Index { get; set; }
     }
 }

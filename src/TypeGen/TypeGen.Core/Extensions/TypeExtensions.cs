@@ -131,14 +131,16 @@ namespace TypeGen.Core.Extensions
             return interfaces.ExcludeSystemTypes();
         }
 
-        public static IEnumerable<Type> ExcludeSystemTypes(this IEnumerable<Type> types)
-        {
-            return types.Where(x => !x.Namespace.Contains("System"));
-        }
+        public static bool IsSystemType(this Type type) => type.Namespace.StartsWith("System");
 
-        public static IEnumerable<TypeDependencyInfo> ExcludeSystemTypes(this IEnumerable<TypeDependencyInfo> types)
+        public static IEnumerable<Type> ExcludeSystemTypes(this IEnumerable<Type> types) => types.Where(x => !x.IsSystemType());
+        public static IEnumerable<TypeDependencyInfo> ExcludeSystemTypes(this IEnumerable<TypeDependencyInfo> types) => types.Where(x => !x.Type.IsSystemType());
+
+        public static Type AsGenericTypeDefinition(this Type type)
         {
-            return types.Where(x => !x.Type.Namespace.Contains("System"));
+            if (type.IsConstructedGenericType)
+                return type.GetGenericTypeDefinition();
+            return type;
         }
 
         /// <summary>

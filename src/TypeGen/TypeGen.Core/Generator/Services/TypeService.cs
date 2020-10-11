@@ -78,47 +78,55 @@ namespace TypeGen.Core.Generator.Services
             return false;
         }
 
+        private static readonly Dictionary<string, string[]> TsPrimitiveMap = new Dictionary<string, string[]>
+        {
+            {"Object", new []{
+                "System.Object"
+            } },
+            {"boolean", new []{
+                "System.Boolean"
+            } },
+            {"string", new []{
+                "System.Char",
+                "System.String",
+                "System.Guid" } },
+            {"number",new []{
+                "System.SByte",
+                "System.Byte",
+                "System.Int16",
+                "System.UInt16",
+                "System.Int32",
+                "System.UInt32",
+                "System.Int64",
+                "System.UInt64",
+                "System.Single",
+                "System.Double",
+                "System.Decimal",
+                "System.TimeSpan"
+            } },
+            {"Date", new []{
+                "System.DateTime",
+                "System.DateTimeOffset"
+            } },
+            {"File", new []{ "" } },
+            {"void", new [] { "System.Void" } }
+        };
+
         /// <inheritdoc />
         public string GetTsSimpleTypeName(Type type)
         {
             Requires.NotNull(type, nameof(type));
+
+            type = StripNullable(type);
             if (string.IsNullOrWhiteSpace(type.FullName)) return null;
 
             if (TryGetCustomTypeMapping(type, out string customType))
             {
-                return new[] { "Object", "boolean", "string", "number", "Date", "File" }.Contains(customType) ? customType : null;
+                return TsPrimitiveMap.Keys.Contains(customType) ? customType : null;
             }
 
-            var a = type.FullName;
-            switch (type.FullName)
-            {
-                case "System.Object":
-                    return "Object";
-                case "System.Boolean":
-                    return "boolean";
-                case "System.Char":
-                case "System.String":
-                case "System.Guid":
-                    return "string";
-                case "System.SByte":
-                case "System.Byte":
-                case "System.Int16":
-                case "System.UInt16":
-                case "System.Int32":
-                case "System.UInt32":
-                case "System.Int64":
-                case "System.UInt64":
-                case "System.Single":
-                case "System.Double":
-                case "System.Decimal":
-                case "System.TimeSpan":
-                    return "number";
-                case "System.DateTime":
-                case "System.DateTimeOffset":
-                    return "Date";
-                default:
-                    return null;
-            }
+            var tsType = TsPrimitiveMap.FirstOrDefault(x => x.Value.Contains(type.FullName)).Key;
+            return tsType;
         }
 
         /// <inheritdoc />
@@ -202,6 +210,8 @@ namespace TypeGen.Core.Generator.Services
             Requires.NotNull(GeneratorOptions.TypeNameConverters, nameof(GeneratorOptions.TypeNameConverters));
 
             type = StripNullable(type);
+            if (forTypeDeclaration)
+                type = type.AsGenericTypeDefinition();
 
             if (TryGetCustomTypeMapping(type, out string customType))
             {
@@ -380,7 +390,28 @@ namespace TypeGen.Core.Generator.Services
         private string GetTsCollectionTypeName(Type type)
         {
             Type elementType = GetTsCollectionElementType(type);
-            return GetTsTypeName(elementType) + "[]";
+            if (type.IsArray)
+            {
+                var length = 1;
+                try
+                {
+
+                    //handle multidimensional array
+                    //this is very hacky, but i could not find a way to get 
+                    //the size of an array without creating an instance...
+                    var arrayDef = type.Name.Substring(type.Name.LastIndexOf("["));
+                    length = arrayDef.Split(',').Length;
+                }
+                catch (Exception ex)
+                {
+
+                }
+                return GetTsTypeName(elementType) + string.Concat(Enumerable.Repeat("[]", length));
+            }
+            else
+            {
+                return GetTsTypeName(elementType) + "[]";
+            }
         }
 
         /// <summary>

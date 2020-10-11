@@ -39,7 +39,8 @@ namespace TypeGen.Core.Generator.Services
 
             var typeInfo = type.GetTypeInfo();
 
-            if (!typeInfo.IsClass && !typeInfo.IsInterface) return Enumerable.Empty<TypeDependencyInfo>();
+            if (!typeInfo.IsClass && !typeInfo.IsInterface)
+                return Enumerable.Empty<TypeDependencyInfo>();
 
             type = _typeService.StripNullable(type);
 

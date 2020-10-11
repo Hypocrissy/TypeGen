@@ -128,7 +128,7 @@ namespace TypeGen.Core.Generator.Services
             if (baseType == null)
                 return string.Empty;
 
-            string baseTypeName = _typeService.GetTsTypeName(baseType, true);
+            string baseTypeName = _typeService.GetTsTypeName(baseType, false);
             return baseTypeName;
         }
 

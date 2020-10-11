@@ -1,5 +1,5 @@
+using System;
 using System.Collections.Generic;
-using TypeGen.Core.Generator;
 using TypeGen.Core.SpecGeneration;
 using TypeGen.Core.Validation;
 
@@ -8,27 +8,27 @@ namespace TypeGen.Core.Metadata
     internal class MetadataReaderFactory : IMetadataReaderFactory
     {
         private IMetadataReader _instance;
-        private GenerationSpec _previousGenerationSpec;
+        private IDictionary<Type, TypeSpec> _previousSpecs;
 
-        private GenerationSpec _generationSpec;
-        public GenerationSpec GenerationSpec
+        private IDictionary<Type, TypeSpec> _generationSpec;
+        public IDictionary<Type, TypeSpec> Specs
         {
             get => _generationSpec;
             set
             {
-                _previousGenerationSpec = _generationSpec;
+                _previousSpecs = _generationSpec;
                 _generationSpec = value;
             }
         }
 
         public IMetadataReader GetInstance()
         {
-            Requires.NotNull(GenerationSpec, nameof(GenerationSpec));
+            Requires.NotNull(Specs, nameof(Specs));
 
-            if (_previousGenerationSpec == GenerationSpec) return _instance;
+            if (_previousSpecs == Specs) return _instance;
 
-            _instance = new GenerationSpecMetadataReader(GenerationSpec);
-            _previousGenerationSpec = GenerationSpec;
+            _instance = new GenerationSpecMetadataReader(Specs);
+            _previousSpecs = Specs;
             
             return _instance;
         }
