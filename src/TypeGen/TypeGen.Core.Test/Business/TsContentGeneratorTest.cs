@@ -28,7 +28,7 @@ namespace TypeGen.Core.Test.Business
         public TsContentGeneratorTest()
         {
             // this needs to be changed to use mocked MetadataReader
-            
+
             _metadataReaderFactory = Substitute.For<IMetadataReaderFactory>();
             _metadataReaderFactory.GetInstance().Returns(new AttributeMetadataReader());
         }
@@ -38,37 +38,37 @@ namespace TypeGen.Core.Test.Business
         [Fact]
         public void GetImportsText_TypeNull_ExceptionThrown()
         {
-        
+
             //arrange
             var generatorOptionsProvider = new GeneratorOptionsProvider { GeneratorOptions = new GeneratorOptions() };
             var tsContentGenerator = new TsContentGenerator(_typeDependencyService, _typeService, _templateService, _tsContentParser, _metadataReaderFactory, generatorOptionsProvider, null);
-            
+
             //act,assert
             Assert.Throws<ArgumentNullException>(() => tsContentGenerator.GetImportsText(null, "asdf"));
         }
-        
+
         [Fact]
         public void GetImportsText_FileNameConvertersNull_ExceptionThrown()
         {
             //arrange
             var generatorOptionsProvider = new GeneratorOptionsProvider { GeneratorOptions = new GeneratorOptions { FileNameConverters = null } };
-            
+
             //act,assert
             var tsContentGenerator = new TsContentGenerator(_typeDependencyService, _typeService, _templateService, _tsContentParser, _metadataReaderFactory, generatorOptionsProvider, null);
             Assert.Throws<ArgumentNullException>(() => tsContentGenerator.GetImportsText(typeof(string), "asdf"));
         }
-        
+
         [Fact]
         public void GetImportsText_TypeNameConvertersNull_ExceptionThrown()
         {
             //arrange
             var generatorOptionsProvider = new GeneratorOptionsProvider { GeneratorOptions = new GeneratorOptions { TypeNameConverters = null } };
             var tsContentGenerator = new TsContentGenerator(_typeDependencyService, _typeService, _templateService, _tsContentParser, _metadataReaderFactory, generatorOptionsProvider, null);
-            
+
             //act,assert
             Assert.Throws<ArgumentNullException>(() => tsContentGenerator.GetImportsText(typeof(string), "asdf"));
         }
-        
+
         [Theory]
         [MemberData(nameof(GetImportsText_TestCases))]
         public void GetImportsText_TypeGiven_ImportsTextGenerated(Type type,
@@ -79,12 +79,15 @@ namespace TypeGen.Core.Test.Business
                 string expectedOutput)
         {
             //arrange
-            var generatorOptionsProvider = new GeneratorOptionsProvider { GeneratorOptions = new GeneratorOptions
+            var generatorOptionsProvider = new GeneratorOptionsProvider
             {
-                FileNameConverters = fileNameConverters,
-                TypeNameConverters = typeNameConverters
-            } };
-            _typeDependencyService.GetTypeDependencies(Arg.Any<Type>()).Returns(typeDependencies);
+                GeneratorOptions = new GeneratorOptions
+                {
+                    FileNameConverters = fileNameConverters,
+                    TypeNameConverters = typeNameConverters
+                }
+            };
+            _typeDependencyService.GetTypeDependencies(Arg.Any<Type>(), false).Returns(typeDependencies);
             _templateService.FillImportTemplate(Arg.Any<string>(), Arg.Any<string>(), Arg.Any<string>()).Returns(i => $"{i.ArgAt<string>(0)} | {i.ArgAt<string>(1)} | {i.ArgAt<string>(2)};");
             var tsContentGenerator = new TsContentGenerator(_typeDependencyService, _typeService, _templateService, _tsContentParser, _metadataReaderFactory, generatorOptionsProvider, null);
 
@@ -124,12 +127,12 @@ namespace TypeGen.Core.Test.Business
                 "CustomType |  | custom/directory/custom-type;" +
                 "OtherType | OT | other/directory/other-type;\r\n"
             },
-            
+
             new object[] { typeof(GetImportsText_TestData.ParentCustomBase), null, new TypeNameConverterCollection(new PascalCaseToKebabCaseConverter()), new TypeNameConverterCollection(),
                 new TypeDependencyInfo[] {},
                 "Base |  | base/directory/base;\r\n"
             },
-            
+
             new object[] { typeof(GetImportsText_TestData.ParentCustomBaseAlias), null, new TypeNameConverterCollection(new PascalCaseToKebabCaseConverter()), new TypeNameConverterCollection(),
                 new TypeDependencyInfo[] {},
                 "Base | B | other/directory/base;\r\n"
@@ -202,7 +205,7 @@ namespace TypeGen.Core.Test.Business
             [ExportTsEnum(OutputDir = "child/dir/child-enum-dir")]
             public enum ChildEnum { }
         }
-        
+
         #endregion
 
         [Fact]
@@ -211,18 +214,18 @@ namespace TypeGen.Core.Test.Business
             //arrange
             var generatorOptionsProvider = new GeneratorOptionsProvider { GeneratorOptions = new GeneratorOptions() };
             var tsContentGenerator = new TsContentGenerator(_typeDependencyService, _typeService, _templateService, _tsContentParser, _metadataReaderFactory, generatorOptionsProvider, null);
-            
+
             //act,assert
             Assert.Throws<ArgumentNullException>(() => tsContentGenerator.GetExtendsText(null));
         }
-        
+
         [Fact]
         public void GetExtendsText_TypeNameConvertersNull_ExceptionThrown()
         {
             //arrange
             var generatorOptionsProvider = new GeneratorOptionsProvider { GeneratorOptions = new GeneratorOptions { TypeNameConverters = null } };
             var tsContentGenerator = new TsContentGenerator(_typeDependencyService, _typeService, _templateService, _tsContentParser, _metadataReaderFactory, generatorOptionsProvider, null);
-            
+
             //act,assert
             Assert.Throws<ArgumentNullException>(() => tsContentGenerator.GetExtendsText(typeof(string)));
         }
@@ -255,18 +258,18 @@ namespace TypeGen.Core.Test.Business
             //arrange
             var generatorOptionsProvider = new GeneratorOptionsProvider { GeneratorOptions = new GeneratorOptions() };
             var tsContentGenerator = new TsContentGenerator(_typeDependencyService, _typeService, _templateService, _tsContentParser, _metadataReaderFactory, generatorOptionsProvider, null);
-            
+
             //act,assert
             Assert.Throws<ArgumentNullException>(() => tsContentGenerator.GetCustomBody(null, 0));
         }
-        
+
         [Fact]
         public void GetCustomHead_FilePathNull_ExceptionThrown()
         {
             //arrange
             var generatorOptionsProvider = new GeneratorOptionsProvider { GeneratorOptions = new GeneratorOptions() };
             var tsContentGenerator = new TsContentGenerator(_typeDependencyService, _typeService, _templateService, _tsContentParser, _metadataReaderFactory, generatorOptionsProvider, null);
-            
+
             //act,assert
             Assert.Throws<ArgumentNullException>(() => tsContentGenerator.GetCustomHead(null));
         }
@@ -279,14 +282,14 @@ namespace TypeGen.Core.Test.Business
             ITypeService typeService = GetTypeService(convertTypesToString);
             var generatorOptionsProvider = new GeneratorOptionsProvider { GeneratorOptions = new GeneratorOptions() };
             var tsContentGenerator = new TsContentGenerator(_typeDependencyService, typeService, _templateService, _tsContentParser, _metadataReaderFactory, generatorOptionsProvider, null);
-            
+
             //act
             string actual = tsContentGenerator.GetMemberValueText(memberInfo);
 
             //assert
             Assert.Equal(expected, actual);
         }
-        
+
         public static IEnumerable<object[]> GetMemberValueText_Data = new[]
         {
             new object[] { typeof(GetMemberValueText_TestClass).GetField(nameof(GetMemberValueText_TestClass.IntFieldNoValue)), false, null },
@@ -320,22 +323,22 @@ namespace TypeGen.Core.Test.Business
                 public int TestField;
                 public string TestProperty { get; set; }
             }
-            
+
             public int IntFieldNoValue;
             public int IntPropertyNoValue { get; set; }
-            
+
             public int IntFieldValue = 2;
             public int IntPropertyValue { get; set; } = 2;
-            
+
             public string StringFieldValue = "value";
             public string StringPropertyValue { get; set; } = "value";
-            
+
             public Guid GuidFieldValue = TestGuid;
             public Guid GuidPropertyValue { get; set; } = TestGuid;
-            
+
             public DateTime DateTimeFieldValue = TestDateTime;
             public DateTime DateTimePropertyValue { get; set; } = TestDateTime;
-            
+
             public DateTimeOffset DateTimeOffsetFieldValue = TestDateTimeOffset;
             public DateTimeOffset DateTimeOffsetPropertyValue { get; set; } = TestDateTimeOffset;
 

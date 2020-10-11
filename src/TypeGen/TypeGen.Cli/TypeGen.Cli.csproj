@@ -4,8 +4,8 @@
     <TargetFrameworks>netcoreapp2.1;netcoreapp2.2;netcoreapp3.0;netcoreapp3.1</TargetFrameworks>
   </PropertyGroup>
   <ItemGroup>
-    <PackageReference Include="Newtonsoft.Json" Version="12.0.2" />
-    <PackageReference Include="NuGet.Configuration" Version="4.3.0" />
+    <PackageReference Include="Newtonsoft.Json" Version="12.0.3" />
+    <PackageReference Include="NuGet.Configuration" Version="5.7.0" />
   </ItemGroup>
   <ItemGroup>
     <ProjectReference Include="..\TypeGen.Core\TypeGen.Core.csproj" />

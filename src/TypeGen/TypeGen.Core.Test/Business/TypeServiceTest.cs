@@ -63,8 +63,8 @@ namespace TypeGen.Core.Test.Business
         [InlineData(typeof(DateTime), true)]
         [InlineData(typeof(DateTimeOffset), true)]
         [InlineData(typeof(MyClass), false)]
-        [InlineData(typeof(int?), false)]
-        [InlineData(typeof(DateTime?), false)]
+        [InlineData(typeof(int?), true)]
+        [InlineData(typeof(DateTime?), true)]
         public void IsTsSimpleType_TypeGiven_DeterminedIfTsSimpleType(Type type, bool expectedResult)
         {
             bool actualResult = _typeService.IsTsSimpleType(type);
@@ -91,8 +91,8 @@ namespace TypeGen.Core.Test.Business
         [InlineData(typeof(DateTime), "Date")]
         [InlineData(typeof(DateTimeOffset), "Date")]
         [InlineData(typeof(MyClass), null)]
-        [InlineData(typeof(int?), null)]
-        [InlineData(typeof(DateTime?), null)]
+        [InlineData(typeof(int?), "number")]
+        [InlineData(typeof(DateTime?), "Date")]
         public void GetTsSimpleTypeName_TypeGiven_TsSimpleTypeNameReturned(Type type, string expectedResult)
         {
             string actualResult = _typeService.GetTsSimpleTypeName(type);
@@ -300,7 +300,7 @@ namespace TypeGen.Core.Test.Business
             new object[] { typeof(GenericClass3<,,>), new TypeNameConverterCollection(), false, "GenericClass3<T, U, V>" },
             new object[] { typeof(GenericClass3<,,>), new TypeNameConverterCollection(), true, "GenericClass3<T, U extends MyClass, V>" },
             new object[] { typeof(GenericClass3<int, MyClass, string>), new TypeNameConverterCollection(), false, "GenericClass3<number, MyClass, string>" },
-            new object[] { typeof(GenericClass3<int, MyClass, string>), new TypeNameConverterCollection(), true, "GenericClass3<number, MyClass, string>" }
+            new object[] { typeof(GenericClass3<int, MyClass, string>), new TypeNameConverterCollection(), true, "GenericClass3<T, U extends MyClass, V>" }
         };
         
         [Theory]

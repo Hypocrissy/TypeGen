@@ -6,6 +6,7 @@ using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using System.Reflection;
+using System.Runtime.CompilerServices;
 using System.Threading.Tasks;
 using TypeGen.Core.Extensions;
 using TypeGen.Core.Generator.Services;
@@ -797,5 +798,11 @@ namespace TypeGen.Core.Generator
         public List<string> Services { get; set; }
         public List<string> Barrels { get; set; }
         public string Index { get; set; }
+
+        public IEnumerable<string> AllFiles => (Types ?? Enumerable.Empty<string>())
+            .Concat(Services ?? Enumerable.Empty<string>())
+            .Concat(Barrels ?? Enumerable.Empty<string>())
+            .Concat(new[] { Index })
+            .Where(x => !string.IsNullOrEmpty(x));
     }
 }
