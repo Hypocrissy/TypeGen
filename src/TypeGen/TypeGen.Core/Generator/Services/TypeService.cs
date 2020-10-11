@@ -437,9 +437,15 @@ namespace TypeGen.Core.Generator.Services
         private string GetGenericTsTypeNameForDeclaration(Type type)
         {
             return GetGenericTsTypeNameDeclarationAgnostic(type,
-                t => t.GetTypeInfo().BaseType != null && t.GetTypeInfo().BaseType != typeof(object)
-                    ? $"{t.Name} extends {GetTsTypeName(t.GetTypeInfo().BaseType, true)}"
-                    : t.Name);
+                t =>
+                {
+                    var baseType = t.GetTypeInfo().BaseType;
+                    return baseType != null &&
+                           baseType != typeof(object) &&
+                           !baseType.IsSystemType()
+                     ? $"{t.Name} extends {GetTsTypeName(t.GetTypeInfo().BaseType, true)}"
+                     : t.Name;
+                });
         }
 
         /// <summary>
