@@ -41,45 +41,42 @@ namespace TypeGen.Core.Generator.Services
             Requires.NotNull(type, nameof(type));
 
             var typeInfo = type.GetTypeInfo();
+            var name = typeInfo.FullName;
 
             if (!typeInfo.IsClass && !typeInfo.IsInterface)
                 return Enumerable.Empty<TypeDependencyInfo>();
 
             type = _typeService.StripNullable(type);
 
-            var ret = GetGenericTypeDefinitionDependencies(type)
+            var ret = GetFlatTypeDependencies(type)
                 .Concat(GetBaseTypeDependency(type))
                 .Concat(GetImplementedInterfaceTypesDependencies(type, inherited))
                 .Concat(GetMemberTypeDependencies(type))
                 .Distinct(new TypeDependencyInfoTypeComparer<TypeDependencyInfo>())
+                .Where(x => x.Type != type) //we dont want itself as a dependency
                 .ExcludeSystemTypes()
                 .ToList();
             return ret;
         }
 
-        /// <summary>
-        /// Gets type dependencies related to generic type definition
-        /// </summary>
-        /// <param name="type"></param>
-        /// <returns></returns>
-        private IEnumerable<TypeDependencyInfo> GetGenericTypeDefinitionDependencies(Type type)
+        public IEnumerable<TypeDependencyInfo> GetMethodDependencies(MethodInfo methodInfo)
         {
-            var result = new List<TypeDependencyInfo>();
+            Requires.NotNull(methodInfo, nameof(methodInfo));
 
-            if (!type.GetTypeInfo().IsGenericTypeDefinition) return result;
+            var parameters = methodInfo.GetParameters()
+                .Select(x => x.ParameterType)
+                .Concat(new[] { methodInfo.ReturnParameter.ParameterType })
+                .Select(typeInfo => _typeService.StripNullable(typeInfo))
+                .Where(x => x != null)
+                .ToList();
 
-            foreach (Type genericArgumentType in type.GetGenericArguments())
-            {
-                Type baseType = genericArgumentType.GetTypeInfo().BaseType;
-                if (baseType == null || baseType == typeof(object)) continue;
+            var test = string.Join("|", parameters.Select(x => x.Name));
 
-                baseType = _typeService.StripNullable(baseType);
-                Type baseFlatType = _typeService.GetFlatType(baseType);
-
-                result.AddRange(GetFlatTypeDependencies(baseFlatType));
-            }
-
-            return result;
+            var ret = parameters.SelectMany(type => GetFlatTypeDependencies(type))
+                .Distinct(new TypeDependencyInfoTypeComparer<TypeDependencyInfo>())
+                .ExcludeSystemTypes()
+                .ToList();
+            return ret;
         }
 
         /// <summary>
@@ -140,44 +137,90 @@ namespace TypeGen.Core.Generator.Services
             return result;
         }
 
-        private IEnumerable<TypeDependencyInfo> GetFlatTypeDependencies(Type flatType, IEnumerable<Attribute> memberAttributes = null, bool isBase = false)
+        private IEnumerable<TypeDependencyInfo> GetFlatTypeDependencies(Type type, IEnumerable<Attribute> memberAttributes = null, bool isBase = false)
         {
-            if (_typeService.IsTsSimpleType(flatType) || flatType.IsGenericParameter) return Enumerable.Empty<TypeDependencyInfo>();
+            if (_typeService.IsTsSimpleType(type) || type.IsGenericParameter) return Enumerable.Empty<TypeDependencyInfo>();
 
-            if (flatType.GetTypeInfo().IsGenericType)
+            if (type.GetTypeInfo().IsGenericType)
             {
-                return GetGenericTypeNonDefinitionDependencies(flatType)
-                    .Select(t => new TypeDependencyInfo(t, memberAttributes, isBase));
+                var result = _typeService.IsDictionaryType(type) ?
+                    new List<TypeDependencyInfo>() :
+                    new List<TypeDependencyInfo> { new TypeDependencyInfo(type.GetGenericTypeDefinition(), memberAttributes, isBase) };
+
+                foreach (var genericArgument in type.GetGenericArguments())
+                {
+                    var argumentType = _typeService.StripNullable(genericArgument);
+                    var flatArgumentType = _typeService.GetFlatType(argumentType);
+                    if (_typeService.IsTsSimpleType(flatArgumentType) || flatArgumentType.IsGenericParameter) continue;
+
+                    result.AddRange(flatArgumentType.GetTypeInfo().IsGenericType
+                        ? GetFlatTypeDependencies(flatArgumentType, memberAttributes, isBase)
+                        : new[] { new TypeDependencyInfo(flatArgumentType, memberAttributes, isBase) });
+                }
+
+                return result;
+            }
+            else if (type.GetTypeInfo().HasElementType)
+            {
+                return GetFlatTypeDependencies(type.GetElementType(), memberAttributes);
             }
 
-            return new[] { new TypeDependencyInfo(flatType, memberAttributes, isBase) };
+            return new[] { new TypeDependencyInfo(type, memberAttributes, isBase) };
         }
 
-        /// <summary>
-        /// Gets type dependencies for a single generic member type
-        /// </summary>
-        /// <param name="type"></param>
-        /// <returns></returns>
-        private IEnumerable<Type> GetGenericTypeNonDefinitionDependencies(Type type)
-        {
-            if (!type.GetTypeInfo().IsGenericType) throw new CoreException($"Type {type.FullName} must be a generic type");
+        ///// <summary>
+        ///// Gets type dependencies related to generic type definition
+        ///// </summary>
+        ///// <param name="type"></param>
+        ///// <returns></returns>
+        //private IEnumerable<TypeDependencyInfo> GetGenericTypeDefinitionDependencies(Type type)
+        //{
+        //    var result = new List<TypeDependencyInfo>();
 
-            List<Type> result = _typeService.IsDictionaryType(type)
-                ? new List<Type>()
-                : new List<Type> { type.GetGenericTypeDefinition() };
+        //    if (!type.GetTypeInfo().IsGenericTypeDefinition) return result;
 
-            foreach (Type genericArgument in type.GetGenericArguments())
-            {
-                Type argumentType = _typeService.StripNullable(genericArgument);
-                Type flatArgumentType = _typeService.GetFlatType(argumentType);
-                if (_typeService.IsTsSimpleType(flatArgumentType) || flatArgumentType.IsGenericParameter) continue;
+        //    foreach (Type genericArgumentType in type.GetGenericArguments())
+        //    {
+        //        Type baseType = genericArgumentType.GetTypeInfo().BaseType;
+        //        if (baseType == null || baseType == typeof(object)) continue;
 
-                result.AddRange(flatArgumentType.GetTypeInfo().IsGenericType
-                    ? GetGenericTypeNonDefinitionDependencies(flatArgumentType)
-                    : new[] { flatArgumentType });
-            }
+        //        baseType = _typeService.StripNullable(baseType);
+        //        Type baseFlatType = _typeService.GetFlatType(baseType);
 
-            return result;
-        }
+        //        result.AddRange(GetFlatTypeDependencies(baseFlatType));
+        //    }
+
+        //    return result;
+        //}
+
+        ///// <summary>
+        ///// Gets type dependencies for a single generic member type
+        ///// </summary>
+        ///// <param name="type"></param>
+        ///// <returns></returns>
+        //private IEnumerable<Type> GetGenericTypeNonDefinitionDependencies(Type type, bool withoutSelf = false)
+        //{
+        //    if (!type.GetTypeInfo().IsGenericType)
+        //        return Enumerable.Empty<Type>();
+        //    //throw new CoreException($"Type {type.FullName} must be a generic type");
+
+        //    //var result = new List<Type>();
+        //    var result = _typeService.IsDictionaryType(type)
+        //        ? new List<Type>()
+        //        : withoutSelf ? new List<Type>() : new List<Type> { type.GetGenericTypeDefinition() };
+
+        //    foreach (Type genericArgument in type.GetGenericArguments())
+        //    {
+        //        Type argumentType = _typeService.StripNullable(genericArgument);
+        //        Type flatArgumentType = _typeService.GetFlatType(argumentType);
+        //        if (_typeService.IsTsSimpleType(flatArgumentType) || flatArgumentType.IsGenericParameter) continue;
+
+        //        result.AddRange(flatArgumentType.GetTypeInfo().IsGenericType
+        //            ? GetGenericTypeNonDefinitionDependencies(flatArgumentType)
+        //            : new[] { flatArgumentType });
+        //    }
+
+        //    return result;
+        //}
     }
 }

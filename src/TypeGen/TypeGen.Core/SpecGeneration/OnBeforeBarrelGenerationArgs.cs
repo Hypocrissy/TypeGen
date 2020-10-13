@@ -1,5 +1,3 @@
-using System.Collections;
-using System.Collections.Generic;
 using TypeGen.Core.Generator;
 
 namespace TypeGen.Core.SpecGeneration
@@ -7,12 +5,12 @@ namespace TypeGen.Core.SpecGeneration
     public class OnBeforeBarrelGenerationArgs
     {
         public GeneratorOptions GeneratorOptions { get; }
-        public IEnumerable<string> GeneratedFiles { get; }
+        public GenerationResult GenerationResult { get; }
 
-        public OnBeforeBarrelGenerationArgs(GeneratorOptions generatorOptions, IEnumerable<string> generatedFiles)
+        public OnBeforeBarrelGenerationArgs(GeneratorOptions generatorOptions, GenerationResult generationResult)
         {
             GeneratorOptions = generatorOptions;
-            GeneratedFiles = generatedFiles;
+            GenerationResult = generationResult;
         }
     }
 }

@@ -73,6 +73,38 @@ namespace TypeGen.Core.Generator.Services
             return result;
         }
 
+        public string GetImportsText(IEnumerable<MethodInfo> methodInfos, string outputDir)
+        {
+            var result = string.Join(Environment.NewLine, methodInfos.Select(x => GetImportsText(x, outputDir)));
+            result = DistinctImports(result);
+            return result;
+        }
+
+        public string GetImportsText(MethodInfo methodInfo, string outputDir)
+        {
+            Requires.NotNull(methodInfo, nameof(methodInfo));
+            Requires.NotNull(GeneratorOptions.FileNameConverters, nameof(GeneratorOptions.FileNameConverters));
+            Requires.NotNull(GeneratorOptions.TypeNameConverters, nameof(GeneratorOptions.TypeNameConverters));
+
+            var result = GetTypeDependencyImportsText(methodInfo, outputDir);
+            //result += GetCustomImportsText(type);
+
+            if (!string.IsNullOrEmpty(result))
+            {
+                result += "\r\n";
+            }
+
+            result = DistinctImports(result);
+            return result;
+        }
+
+        private string DistinctImports(string importText)
+        {
+            var importSplit = importText.Split(new[] { Environment.NewLine }, StringSplitOptions.RemoveEmptyEntries).Distinct();
+            importText = string.Join(Environment.NewLine, importSplit);
+            return importText;
+        }
+
         /// <summary>
         /// Gets the text for the "extends" section
         /// </summary>
@@ -154,7 +186,7 @@ namespace TypeGen.Core.Generator.Services
         {
             if (!string.IsNullOrEmpty(outputDir) && !outputDir.EndsWith("/") && !outputDir.EndsWith("\\")) outputDir += "\\";
             var result = "";
-            IEnumerable<TypeDependencyInfo> typeDependencies = _typeDependencyService.GetTypeDependencies(type, false);
+            var typeDependencies = _typeDependencyService.GetTypeDependencies(type, false);
 
             // exclude base type dependency if TsCustomBaseAttribute is specified (it will be added in custom imports)
             if (_metadataReaderFactory.GetInstance().GetAttribute<TsCustomBaseAttribute>(type) != null)
@@ -162,32 +194,57 @@ namespace TypeGen.Core.Generator.Services
                 typeDependencies = typeDependencies.Where(td => !td.IsBase);
             }
 
-            foreach (TypeDependencyInfo typeDependencyInfo in typeDependencies)
+            foreach (var typeDependencyInfo in typeDependencies)
             {
-                Type typeDependency = typeDependencyInfo.Type;
-
-                string dependencyOutputDir = GetTypeDependencyOutputDir(typeDependencyInfo, outputDir);
-
-                // get path diff
-                string pathDiff = FileSystemUtils.GetPathDiff(outputDir, dependencyOutputDir);
-                pathDiff = pathDiff.StartsWith("..\\") || pathDiff.StartsWith("../") ? pathDiff : $"./{pathDiff}";
-
-                // get type & file name
-                string typeDependencyName = typeDependency.Name.RemoveTypeArity();
-                string fileName = GeneratorOptions.FileNameConverters.Convert(typeDependencyName, typeDependency);
-
-                // get file path
-                string dependencyPath = Path.Combine(pathDiff.EnsurePostfix("/"), fileName);
-                dependencyPath = dependencyPath.Replace('\\', '/');
-
-                string typeName = GeneratorOptions.TypeNameConverters.Convert(typeDependencyName, typeDependency);
-
-                result += _typeService.UseDefaultExport(typeDependency) ?
-                    _templateService.FillImportDefaultExportTemplate(typeName, dependencyPath) :
-                    _templateService.FillImportTemplate(typeName, "", dependencyPath);
+                result += GetTypeImportsText(typeDependencyInfo, outputDir);
             }
 
             return result;
+        }
+
+        private string GetTypeDependencyImportsText(MethodInfo methodInfo, string outputDir)
+        {
+            if (!string.IsNullOrEmpty(outputDir) && !outputDir.EndsWith("/") && !outputDir.EndsWith("\\")) outputDir += "\\";
+            var result = "";
+            var typeDependencies = _typeDependencyService.GetMethodDependencies(methodInfo);
+
+            foreach (var typeDependencyInfo in typeDependencies)
+            {
+                result += GetTypeImportsText(typeDependencyInfo, outputDir);
+            }
+
+            return result;
+        }
+
+        private string GetTypeImportsText(TypeDependencyInfo typeDependencyInfo, string outputDir)
+        {
+            var typeDependency = typeDependencyInfo.Type;
+            string dependencyOutputDir = GetTypeDependencyOutputDir(typeDependencyInfo, outputDir);
+
+            // get path diff
+            string pathDiff = FileSystemUtils.GetPathDiff(outputDir, dependencyOutputDir);
+            pathDiff = pathDiff.StartsWith("..\\") || pathDiff.StartsWith("../") ? pathDiff : $"./{pathDiff}";
+
+            // get type & file name
+            string typeDependencyName = typeDependency.Name.RemoveTypeArity();
+            string fileName = GeneratorOptions.FileNameConverters.Convert(typeDependencyName, typeDependency);
+
+            // get file path
+            string dependencyPath = Path.Combine(pathDiff.EnsurePostfix("/"), fileName);
+            dependencyPath = dependencyPath.Replace('\\', '/');
+
+            string typeName = GeneratorOptions.TypeNameConverters.Convert(typeDependencyName, typeDependency);
+
+            var result = _typeService.UseDefaultExport(typeDependency) ?
+                _templateService.FillImportDefaultExportTemplate(typeName, dependencyPath) :
+                _templateService.FillImportTemplate(typeName, "", dependencyPath);
+
+            return result;
+        }
+
+        public string GetTypeImportsText(Type type, string outputDir)
+        {
+            return GetTypeImportsText(new TypeDependencyInfo(type), outputDir);
         }
 
         /// <summary>

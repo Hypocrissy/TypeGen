@@ -1,4 +1,5 @@
 ﻿using System;
+using System.Collections.Generic;
 using System.Reflection;
 
 namespace TypeGen.Core.Generator.Services
@@ -13,6 +14,8 @@ namespace TypeGen.Core.Generator.Services
         /// <returns></returns>
         /// <exception cref="ArgumentNullException">Thrown when one of: type, fileNameConverters or typeNameConverters is null</exception>
         string GetImportsText(Type type, string outputDir);
+        string GetImportsText(MethodInfo methodInfo, string outputDir);
+        string GetImportsText(IEnumerable<MethodInfo> methodInfos, string outputDir);
 
         /// <summary>
         /// Gets the text for the "extends" section
@@ -46,5 +49,7 @@ namespace TypeGen.Core.Generator.Services
         string GetMemberValueText(MemberInfo memberInfo);
         string GetImplementsText(Type type);
         string GetExtendsForInterfacesText(Type type);
+
+        string GetTypeImportsText(Type type, string outputDir);
     }
 }

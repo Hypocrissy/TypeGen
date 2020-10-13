@@ -1,4 +1,5 @@
 ﻿using Namotion.Reflection;
+using Newtonsoft.Json;
 using System;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
@@ -69,7 +70,7 @@ namespace TypeGen.Core.Generator
             _metadataReaderFactory = new MetadataReaderFactory();
             _typeService = new TypeService(_metadataReaderFactory, generatorOptionsProvider);
             _typeDependencyService = new TypeDependencyService(_typeService, _metadataReaderFactory, generatorOptionsProvider);
-            _templateService = new TemplateService(internalStorage, generatorOptionsProvider);
+            _templateService = new ScribanTemplateService(internalStorage, generatorOptionsProvider);
 
             _tsContentGenerator = new TsContentGenerator(_typeDependencyService,
                 _typeService,
@@ -148,44 +149,55 @@ namespace TypeGen.Core.Generator
         public GenerationResult Generate(IEnumerable<GenerationSpec> generationSpecs)
         {
             Requires.NotNullOrEmpty(generationSpecs, nameof(generationSpecs));
+            var pOptions = new ParallelOptions
+            {
+#if DEBUG
+                MaxDegreeOfParallelism = 1
+#endif
+            };
 
             var ret = new GenerationResult();
 
             //_generationContext.InitializeGroupGeneratedTypes();
 
             //OnBeforeGeneration
-            Parallel.ForEach(generationSpecs, (generationSpec) =>
+            Parallel.ForEach(generationSpecs, pOptions, (generationSpec) =>
              {
                  generationSpec.OnBeforeGeneration(new OnBeforeGenerationArgs(Options));
              });
 
             //Merge TypeSpecs
-            var specs = new Dictionary<Type, TypeSpec>();
-            foreach (GenerationSpec generationSpec in generationSpecs)
+            var typeSpecs = new Dictionary<Type, TypeSpec>();
+            var controllerSpecs = new Dictionary<Type, ControllerSpec>();
+            foreach (var generationSpec in generationSpecs)
             {
                 //add all parameter and return types to specs
-                foreach (var methodInfo in generationSpec.MethodSpecs.Keys)
+                foreach (var c in generationSpec.ControllerSpecs)
                 {
-                    generationSpec.AddType(methodInfo.ReturnParameter.ParameterType);
-                    foreach (var parameter in methodInfo.GetParameters())
-                        generationSpec.AddType(parameter.ParameterType);
+                    controllerSpecs.Merge(c.Key, c.Value);
+                    foreach (var m in c.Value.Methods)
+                    {
+                        generationSpec.AddType(m.Key.ReturnParameter.ParameterType);
+                        foreach (var parameter in m.Key.GetParameters())
+                            generationSpec.AddType(parameter.ParameterType);
+                    }
                 }
 
-                specs.Merge(generationSpec.TypeSpecs);
+                typeSpecs.Merge(generationSpec.TypeSpecs);
             }
-            InitializeGeneration(specs);
+            InitializeGeneration(typeSpecs);
 
             //Add Dependencies
             var specDependencies = new ConcurrentDictionary<Type, TypeSpec>();
-            Parallel.ForEach(specs, (spec) =>
+            Parallel.ForEach(typeSpecs, pOptions, (spec) =>
             {
-                AddTypeDependencies(spec.Key, spec.Value, specs, specDependencies);
+                AddTypeDependencies(spec.Key, spec.Value, typeSpecs, specDependencies);
             });
-            specs.Merge(specDependencies);
-            AfterDependencyResolved?.Invoke(this, new AfterDependencyResolveArgs(specs));
+            typeSpecs.Merge(specDependencies);
+            AfterDependencyResolved?.Invoke(this, new AfterDependencyResolveArgs(typeSpecs));
 
-            //Generate Files
-            var typesToGenerate = specs.Where(x => !(_typeService.IsTsSimpleType(x.Key) ||
+            //Generate DTO Files
+            var typesToGenerate = typeSpecs.Where(x => !(_typeService.IsTsSimpleType(x.Key) ||
                         _typeService.IsCollectionType(x.Key) ||
                         _typeService.IsDictionaryType(x.Key) ||
                         x.Key.IsSystemType()))
@@ -196,7 +208,7 @@ namespace TypeGen.Core.Generator
             //TODO Types to generate EVENT!
 
             var typeFiles = new ConcurrentBag<string>();
-            Parallel.ForEach(typesToGenerate, (type) =>
+            Parallel.ForEach(typesToGenerate, pOptions, (type) =>
             {
                 var file = GenerateType(type);
                 if (!file.IsNullOrEmpty())
@@ -210,22 +222,45 @@ namespace TypeGen.Core.Generator
             }
             ret.Types = distfiles;
 
+            //Generate Service Files
+
+            var serviceFiles = new ConcurrentBag<string>();
+
+            if (controllerSpecs.Any())
+            {
+                Parallel.ForEach(controllerSpecs, pOptions, (controllerSpec) =>
+                {
+                    var file = GenerateService(controllerSpec);
+                    if (!file.IsNullOrEmpty())
+                        serviceFiles.Add(file);
+                });
+                //var apiExport = GenerateServicesConst(serviceGroupes.Select(x => x.Key),
+                //        //outputDir
+                //        serviceGroupes.FirstOrDefault().FirstOrDefault().Value.OutputDir);
+                //if (!string.IsNullOrEmpty(apiExport))
+                //{
+                //    serviceFiles.Add(apiExport);
+                //}
+
+                ret.Services = serviceFiles.ToList();
+            }
+
             //_generationContext.ClearGroupGeneratedTypes();
 
             //generate barrels
 
             if (Options.CreateIndexFile)
             {
-                ret.Index = GenerateIndexFile(typeFiles);
+                ret.Index = GenerateIndexFile(typeFiles.Concat(serviceFiles));
             }
 
-            Parallel.ForEach(generationSpecs, (generationSpec) =>
+            Parallel.ForEach(generationSpecs, pOptions, (generationSpec) =>
             {
-                generationSpec.OnBeforeBarrelGeneration(new OnBeforeBarrelGenerationArgs(Options, typeFiles));
+                generationSpec.OnBeforeBarrelGeneration(new OnBeforeBarrelGenerationArgs(Options, ret));
             });
 
             var barrelFiles = new ConcurrentBag<string>();
-            Parallel.ForEach(generationSpecs, (generationSpec) =>
+            Parallel.ForEach(generationSpecs, pOptions, (generationSpec) =>
             {
                 Parallel.ForEach(generationSpec.BarrelSpecs, (barrelSpec) =>
                 {
@@ -324,6 +359,169 @@ namespace TypeGen.Core.Generator
             //throw new CoreException($"Generated type must be either a C# class, interface or enum. Error when generating type {type.FullName}");
         }
 
+        private string GenerateServicesConst(IEnumerable<Type> services, string outputDir)
+        {
+            if (!services.Any())
+                return string.Empty;
+
+            var servicesFormatted = services.Select(serviceType =>
+            {
+                return new
+                {
+                    Name = Options.TypeNameConverters.Convert(serviceType.Name, serviceType),
+                    Import = _tsContentGenerator.GetTypeImportsText(serviceType, outputDir)
+                };
+            }).ToList();
+
+            //TODO Into Template - for testing only
+
+            var importText = string.Join("", servicesFormatted.Select(x => x.Import));
+            var apis = string.Join(", ", servicesFormatted.Select(x => x.Name));
+
+            var content = @$"
+{importText}
+export const APIS = [{apis}];";
+
+            var filePath = GetFilePath("apis.export", outputDir);
+            var filePathRelative = GetRelativeFilePath("apis.export", outputDir);
+
+            // write TypeScript file
+            FileContentGenerated?.Invoke(this, new FileContentGeneratedArgs(null, filePath, content));
+            return filePathRelative;
+        }
+
+        private string GenerateService(KeyValuePair<Type, ControllerSpec> controller)
+        {
+            var outputDir = controller.Value.OutputDir;
+            var serviceType = controller.Key;
+
+            var serviceName = Options.TypeNameConverters.Convert(serviceType.Name, serviceType);
+            var importText = _tsContentGenerator.GetImportsText(controller.Value.Methods.Select(x => x.Key), outputDir);
+            var serviceComment = GenerateComment(serviceType);
+
+            var methods = controller.Value.Methods.Select(method =>
+            {
+                var methodType = method.Key;
+                var methodSpec = method.Value;
+
+                var returnParameter = methodType.ReturnParameter.ParameterType;
+                var parameters = methodType.GetParameters().Select(x => new { x.ParameterType, x.Name, x.HasDefaultValue, x.DefaultValue }).ToList();
+
+                return new
+                {
+                    //TODO PropertyNameConverters for methods?
+                    Name = Options.PropertyNameConverters.Convert(methodType.Name, methodType),
+                    ReturnType = _typeService.GetTsTypeName(returnParameter, false),
+                    Parameters = parameters.Select(p => new
+                    {
+                        Name = Options.PropertyNameConverters.Convert(p.Name != "arguments" ? p.Name : "args", p.ParameterType),
+                        OriginalName = p.Name,
+                        Type = _typeService.GetTsTypeName(p.ParameterType, false),
+                        p.HasDefaultValue,
+                        p.DefaultValue
+                    }).ToList(),
+                    Spec = methodSpec,
+                    Comment = GenerateComment(methodType)
+                };
+            }).ToList();
+
+            //TODO Into Template - for testing only
+
+            string methodStr = string.Empty;
+            methods.ForEach(a =>
+            {
+                if (a.Spec.Method == "post" && a.Parameters.Count > 1)
+                {
+
+                }
+                if (a.Spec.Path.Contains("{"))
+                {
+                    // /path/{parameter}
+                }
+
+                var param = "{}";
+                if (a.Spec.Method == "post")
+                {
+                    param = a.Parameters.FirstOrDefault()?.Name ?? param;
+                }
+                else if (a.Spec.Method == "get")
+                {
+                    if (a.Parameters.Any())
+                    {
+                        param = "{" + string.Join(", ", a.Parameters.Select(p =>
+                        {
+                            return p.OriginalName + ": " + p.Name;
+                        })) + "}";
+                    }
+                }
+                else
+                {
+
+                }
+                var ret = @$"return super.{a.Spec.Method}(""{a.Spec.Path}"", {param});";
+                var parameters = string.Join(", ", a.Parameters.Select(p =>
+                {
+                    var defaultVal = "";
+                    if (p.HasDefaultValue)
+                    {
+                        defaultVal = $" = {JsonConvert.SerializeObject(p.DefaultValue)}";
+                    }
+                    return p.Name + ": " + p.Type + defaultVal;
+                }));
+
+                methodStr += $@"{a.Comment}
+    public {a.Name}({parameters}): Observable<{a.ReturnType}> {{
+        {ret}
+    }}{Environment.NewLine}";
+            });
+
+            var content = @$"import {{Observable, of}} from ""rxjs"";
+import {{Injectable}} from ""@angular/core"";
+import {{HttpClient}} from ""@angular/common/http"";
+import {{ApiServiceBase}} from ""../api-service-base"";
+{importText}
+{serviceComment}
+@Injectable({{
+    providedIn: ""root"",
+}})
+export class {serviceName} extends ApiServiceBase {{
+	constructor(http: HttpClient) {{
+        super(http);
+	}}
+{methodStr.Trim(Environment.NewLine.ToCharArray())}
+}}";
+
+            #region spec
+            {
+                var serviceImport = _tsContentGenerator.GetTypeImportsText(serviceType, outputDir);
+                var serviceSpecContent = $@"import {{TestBed}} from '@angular/core/testing';
+
+{serviceImport}
+describe('{serviceName}', () => {{
+    beforeEach(() => TestBed.configureTestingModule({{}}));
+
+	it('should be created', () => {{
+		const service: {serviceName} = TestBed.inject({serviceName});
+		expect(service).toBeTruthy();
+	}});
+}});";
+
+                var specPath = GetFilePath(serviceType, outputDir, ".spec");
+                //var specPathRelative = GetRelativeFilePath(serviceType, outputDir, ".spec");
+
+                // write TypeScript file
+                FileContentGenerated?.Invoke(this, new FileContentGeneratedArgs(serviceType, specPath, serviceSpecContent));
+            }
+            #endregion
+
+            var filePath = GetFilePath(serviceType, outputDir);
+            var filePathRelative = GetRelativeFilePath(serviceType, outputDir);
+
+            // write TypeScript file
+            FileContentGenerated?.Invoke(this, new FileContentGeneratedArgs(serviceType, filePath, content));
+            return filePathRelative;
+        }
+
         /// <summary>
         /// Generates TypeScript files from an assembly
         /// </summary>
@@ -405,6 +603,7 @@ namespace TypeGen.Core.Generator
         private void AddTypeDependencies(Type type, TypeSpec typeSpec,
             IDictionary<Type, TypeSpec> typeSpecs, ConcurrentDictionary<Type, TypeSpec> typeSpecsDependencies)
         {
+            var name = type.FullName;
             var typeDependencies = _typeDependencyService.GetTypeDependencies(type, true);
 
             foreach (var typeDependencyInfo in typeDependencies)
@@ -680,11 +879,19 @@ namespace TypeGen.Core.Generator
         /// <param name="type"></param>
         /// <param name="outputDir"></param>
         /// <returns></returns>
-        private string GetRelativeFilePath(Type type, string outputDir)
+        private string GetRelativeFilePath(Type type, string outputDir, string postfix = null)
         {
             string typeName = type.Name.RemoveTypeArity();
             string fileName = Options.FileNameConverters.Convert(typeName, type);
 
+            if (postfix != null)
+                fileName += postfix;
+
+            return GetRelativeFilePath(fileName, outputDir);
+        }
+
+        private string GetRelativeFilePath(string fileName, string outputDir)
+        {
             if (!string.IsNullOrEmpty(Options.TypeScriptFileExtension))
             {
                 fileName += $".{Options.TypeScriptFileExtension}";
@@ -695,6 +902,7 @@ namespace TypeGen.Core.Generator
                 : Path.Combine(outputDir.EnsurePostfix("/"), fileName);
         }
 
+
         /// <summary>
         /// Gets the output TypeScript file path based on a type.
         /// The path includes base output directory.
@@ -702,9 +910,15 @@ namespace TypeGen.Core.Generator
         /// <param name="type"></param>
         /// <param name="outputDir"></param>
         /// <returns></returns>
-        private string GetFilePath(Type type, string outputDir)
+        private string GetFilePath(Type type, string outputDir, string postfix = null)
         {
-            string fileName = GetRelativeFilePath(type, outputDir);
+            string fileName = GetRelativeFilePath(type, outputDir, postfix);
+            return Path.Combine(Options.BaseOutputDirectory?.EnsurePostfix("/") ?? "", fileName);
+        }
+
+        private string GetFilePath(string fileName, string outputDir)
+        {
+            fileName = GetRelativeFilePath(fileName, outputDir);
             return Path.Combine(Options.BaseOutputDirectory?.EnsurePostfix("/") ?? "", fileName);
         }
 
@@ -792,9 +1006,9 @@ namespace TypeGen.Core.Generator
 
     public class GenerationResult
     {
-        public List<string> Types { get; set; }
-        public List<string> Services { get; set; }
-        public List<string> Barrels { get; set; }
+        public List<string> Types { get; set; } = new List<string>();
+        public List<string> Services { get; set; } = new List<string>();
+        public List<string> Barrels { get; set; } = new List<string>();
         public string Index { get; set; }
 
         public IEnumerable<string> AllFiles => (Types ?? Enumerable.Empty<string>())

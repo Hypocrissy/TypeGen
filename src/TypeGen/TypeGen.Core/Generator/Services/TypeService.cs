@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Linq;
 using System.Reflection;
 using System.Runtime.CompilerServices;
+using System.Threading.Tasks;
 using TypeGen.Core.Extensions;
 using TypeGen.Core.Metadata;
 using TypeGen.Core.TypeAnnotations;
@@ -80,7 +81,7 @@ namespace TypeGen.Core.Generator.Services
 
         private static readonly Dictionary<string, string[]> TsPrimitiveMap = new Dictionary<string, string[]>
         {
-            {"Object", new []{
+            {"any", new []{
                 "System.Object"
             } },
             {"boolean", new []{
@@ -104,12 +105,13 @@ namespace TypeGen.Core.Generator.Services
                 "System.Decimal",
                 "System.TimeSpan"
             } },
-            {"Date", new []{
+            {"Date | string", new []{
                 "System.DateTime",
                 "System.DateTimeOffset"
             } },
             {"File", new []{ "" } },
-            {"void", new [] { "System.Void" } }
+            {"void", new [] { "System.Void" } },
+            { "string | number", new [] {"System.Enum"} }
         };
 
         /// <inheritdoc />
@@ -178,6 +180,28 @@ namespace TypeGen.Core.Generator.Services
                 && (type.GetInterface("IEnumerable") != null || (type.FullName != null && type.FullName.StartsWith("System.Collections.IEnumerable"))); // implements IEnumerable or is IEnumerable
         }
 
+        public bool IsTask(Type type, out Type innerType)
+        {
+            Requires.NotNull(type, nameof(type));
+
+            innerType = null;
+            if (type.FullName != null)
+            {
+                if (type.FullName.StartsWith("System.Threading.Tasks.Task`1"))
+                {
+                    innerType = type.GetGenericArguments()[0];
+                    return true;
+                }
+                else if (type.FullName.StartsWith("System.Threading.Tasks.Task"))
+                {
+                    innerType = typeof(void);
+                    return true;
+                }
+            }
+
+            return false;
+        }
+
         /// <inheritdoc />
         public bool IsDictionaryType(Type type)
         {
@@ -209,8 +233,13 @@ namespace TypeGen.Core.Generator.Services
             Requires.NotNull(type, nameof(type));
             Requires.NotNull(GeneratorOptions.TypeNameConverters, nameof(GeneratorOptions.TypeNameConverters));
 
+            if (IsTask(type, out var innerType))
+            {
+                type = innerType;
+            }
+
             type = StripNullable(type);
-            if (forTypeDeclaration)
+            if (type.IsConstructedGenericType && forTypeDeclaration)
                 type = type.AsGenericTypeDefinition();
 
             if (TryGetCustomTypeMapping(type, out string customType))

@@ -1,5 +1,6 @@
 ﻿using System;
 using System.Collections.Generic;
+using System.Reflection;
 
 namespace TypeGen.Core.Generator.Services
 {
@@ -16,5 +17,6 @@ namespace TypeGen.Core.Generator.Services
         /// <returns></returns>
         /// <exception cref="ArgumentNullException">Thrown when the type is null</exception>
         IEnumerable<TypeDependencyInfo> GetTypeDependencies(Type type, bool inherited);
+        IEnumerable<TypeDependencyInfo> GetMethodDependencies(MethodInfo methodInfo);
     }
 }

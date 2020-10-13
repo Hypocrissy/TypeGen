@@ -1,6 +1,5 @@
 ﻿using System.Collections.Generic;
 using TypeGen.Core.Converters;
-using TypeGen.Core.Generator.Services;
 using TypeGen.Core.Utils;
 
 namespace TypeGen.Core.Generator

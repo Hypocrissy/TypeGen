@@ -14,7 +14,7 @@ namespace TypeGen.Core.SpecGeneration
     public abstract class GenerationSpec
     {
         internal GeneratorOptions Options { get; set; }
-        internal IDictionary<MethodInfo, MethodSpec> MethodSpecs { get; }
+        internal IDictionary<Type, ControllerSpec> ControllerSpecs { get; }
         internal IDictionary<Type, TypeSpec> TypeSpecs { get; }
         internal IList<BarrelSpec> BarrelSpecs { get; }
 
@@ -22,7 +22,7 @@ namespace TypeGen.Core.SpecGeneration
         {
             TypeSpecs = new Dictionary<Type, TypeSpec>();
             BarrelSpecs = new List<BarrelSpec>();
-            MethodSpecs = new Dictionary<MethodInfo, MethodSpec>();
+            ControllerSpecs = new Dictionary<Type, ControllerSpec>();
         }
 
         public virtual void OnBeforeGeneration(OnBeforeGenerationArgs args)
@@ -108,7 +108,7 @@ namespace TypeGen.Core.SpecGeneration
             return new Generic.EnumSpecBuilder<T>(typeSpec);
         }
 
-        private TypeSpec AddTypeSpec(Type type, TypeSpec typeSpec)
+        protected TypeSpec AddTypeSpec(Type type, TypeSpec typeSpec)
         {
             TypeSpecs[type] = typeSpec;
 
@@ -127,18 +127,27 @@ namespace TypeGen.Core.SpecGeneration
         /// </summary>
         /// <param name="methodInfo"></param>
         /// <param name="methodSpec"></param>
-        protected internal void AddMethod(MethodInfo methodInfo, MethodSpec methodSpec)
+        protected internal void AddMethod(Type controllerType, MethodInfo methodInfo, MethodSpec methodSpec, string outputDir)
         {
-            MethodSpecs[methodInfo] = methodSpec;
+            if (!ControllerSpecs.TryGetValue(controllerType, out var controllerSpec))
+            {
+                ControllerSpecs.Add(controllerType, controllerSpec = new ControllerSpec { OutputDir = outputDir });
+            }
+            controllerSpec.Methods[methodInfo] = methodSpec;
         }
 
         /// <summary>
         /// Adds a type 
         /// </summary>
         /// <param name="t"></param>
-        protected internal void AddType(Type t)
+        protected internal virtual void AddType(Type t, string output = null)
         {
-            AddTypeSpec(t, TypeSpecFactory.CreateTypeSpec(t));
+            AddTypeSpec(t, CreateTypeSpec(t, output));
+        }
+
+        protected internal virtual TypeSpec CreateTypeSpec(Type t, string output)
+        {
+            return TypeSpecFactory.CreateTypeSpec(t, output);
         }
     }
 }
