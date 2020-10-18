@@ -1,5 +1,6 @@
 ﻿using Namotion.Reflection;
 using Newtonsoft.Json;
+using StackExchange.Profiling;
 using System;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
@@ -49,6 +50,8 @@ namespace TypeGen.Core.Generator
         private readonly ITemplateService _templateService;
         private readonly ITsContentGenerator _tsContentGenerator;
         private readonly IFileSystem _fileSystem;
+
+        private MiniProfiler Profiler => MiniProfiler.Current ?? MiniProfiler.StartNew("Profiler");
 
         // keeps track of what types have been generated in the current session
         // private readonly GenerationContext _generationContext;
@@ -148,129 +151,166 @@ namespace TypeGen.Core.Generator
         /// <returns>Generated TypeScript file paths (relative to the Options.BaseOutputDirectory)</returns>
         public GenerationResult Generate(IEnumerable<GenerationSpec> generationSpecs)
         {
-            Requires.NotNullOrEmpty(generationSpecs, nameof(generationSpecs));
-            var pOptions = new ParallelOptions
+            using (Profiler.Step("Generate"))
             {
-#if DEBUG
-                MaxDegreeOfParallelism = 1
-#endif
-            };
-
-            var ret = new GenerationResult();
-
-            //_generationContext.InitializeGroupGeneratedTypes();
-
-            //OnBeforeGeneration
-            Parallel.ForEach(generationSpecs, pOptions, (generationSpec) =>
-             {
-                 generationSpec.OnBeforeGeneration(new OnBeforeGenerationArgs(Options));
-             });
-
-            //Merge TypeSpecs
-            var typeSpecs = new Dictionary<Type, TypeSpec>();
-            var controllerSpecs = new Dictionary<Type, ControllerSpec>();
-            foreach (var generationSpec in generationSpecs)
-            {
-                //add all parameter and return types to specs
-                foreach (var c in generationSpec.ControllerSpecs)
+                Requires.NotNullOrEmpty(generationSpecs, nameof(generationSpecs));
+                var pOptions = new ParallelOptions
                 {
-                    controllerSpecs.Merge(c.Key, c.Value);
-                    foreach (var m in c.Value.Methods)
+#if DEBUG
+                    MaxDegreeOfParallelism = 1
+#endif
+                };
+
+                var ret = new GenerationResult();
+
+                //_generationContext.InitializeGroupGeneratedTypes();
+
+                using (Profiler.Step("OnBeforeGeneration"))
+                {
+                    //OnBeforeGeneration
+                    Parallel.ForEach(generationSpecs, pOptions, (generationSpec) =>
                     {
-                        generationSpec.AddType(m.Key.ReturnParameter.ParameterType);
-                        foreach (var parameter in m.Key.GetParameters())
-                            generationSpec.AddType(parameter.ParameterType);
+                        generationSpec.OnBeforeGeneration(new OnBeforeGenerationArgs(Options));
+                    });
+                }
+
+                //Merge TypeSpecs
+                var typeSpecs = new Dictionary<Type, TypeSpec>();
+                var controllerSpecs = new Dictionary<Type, ControllerSpec>();
+
+                using (Profiler.Step("GenerationSpec"))
+                {
+                    foreach (var generationSpec in generationSpecs)
+                    {
+                        //add all parameter and return types to specs
+                        foreach (var c in generationSpec.ControllerSpecs)
+                        {
+                            controllerSpecs.Merge(c.Key, c.Value);
+                            foreach (var m in c.Value.Methods)
+                            {
+                                generationSpec.AddType(m.Key.ReturnParameter.ParameterType);
+                                foreach (var parameter in m.Key.GetParameters())
+                                    generationSpec.AddType(parameter.ParameterType);
+                            }
+                        }
+
+                        typeSpecs.Merge(generationSpec.TypeSpecs);
+                    }
+                    InitializeGeneration(typeSpecs);
+
+                }
+
+                //Add Dependencies
+                var specDependencies = new ConcurrentDictionary<Type, TypeSpec>();
+
+                using (Profiler.Step("AddTypeDependencies"))
+                {
+                    Parallel.ForEach(typeSpecs, pOptions, (spec) =>
+                    {
+                        AddTypeDependencies(spec.Key, spec.Value, typeSpecs, specDependencies);
+                    });
+                    typeSpecs.Merge(specDependencies);
+                }
+
+                AfterDependencyResolved?.Invoke(this, new AfterDependencyResolveArgs(typeSpecs));
+
+                var typeFiles = new ConcurrentBag<string>();
+                using (Profiler.Step("TypesToGenerate"))
+                {
+                    //Generate DTO Files
+                    var typesToGenerate = typeSpecs.Where(x => !(_typeService.IsTsSimpleType(x.Key) ||
+                            _typeService.IsCollectionType(x.Key) ||
+                            _typeService.IsDictionaryType(x.Key) ||
+                            x.Key.IsSystemType()))
+                    .Select(x => x.Key.AsGenericTypeDefinition())
+                    .Distinct()
+                    .ToList();
+
+                    //TODO Types to generate EVENT!
+
+                    using (Profiler.Step("GenerateType"))
+                    {
+                        Parallel.ForEach(typesToGenerate, pOptions, (type) =>
+                        {
+                            var file = GenerateType(type);
+                            if (!file.IsNullOrEmpty())
+                                typeFiles.Add(file);
+                        });
+
+                        var distfiles = typeFiles.Distinct().ToList();
+                        if (distfiles.Count != typeFiles.Count())
+                        {
+                            throw new CoreException("distfiles != files");
+                        }
+                        ret.Types = distfiles;
                     }
                 }
 
-                typeSpecs.Merge(generationSpec.TypeSpecs);
-            }
-            InitializeGeneration(typeSpecs);
+                //Generate Service Files
 
-            //Add Dependencies
-            var specDependencies = new ConcurrentDictionary<Type, TypeSpec>();
-            Parallel.ForEach(typeSpecs, pOptions, (spec) =>
-            {
-                AddTypeDependencies(spec.Key, spec.Value, typeSpecs, specDependencies);
-            });
-            typeSpecs.Merge(specDependencies);
-            AfterDependencyResolved?.Invoke(this, new AfterDependencyResolveArgs(typeSpecs));
-
-            //Generate DTO Files
-            var typesToGenerate = typeSpecs.Where(x => !(_typeService.IsTsSimpleType(x.Key) ||
-                        _typeService.IsCollectionType(x.Key) ||
-                        _typeService.IsDictionaryType(x.Key) ||
-                        x.Key.IsSystemType()))
-                .Select(x => x.Key.AsGenericTypeDefinition())
-                .Distinct()
-                .ToList();
-
-            //TODO Types to generate EVENT!
-
-            var typeFiles = new ConcurrentBag<string>();
-            Parallel.ForEach(typesToGenerate, pOptions, (type) =>
-            {
-                var file = GenerateType(type);
-                if (!file.IsNullOrEmpty())
-                    typeFiles.Add(file);
-            });
-
-            var distfiles = typeFiles.Distinct().ToList();
-            if (distfiles.Count != typeFiles.Count())
-            {
-                throw new CoreException("distfiles != files");
-            }
-            ret.Types = distfiles;
-
-            //Generate Service Files
-
-            var serviceFiles = new ConcurrentBag<string>();
-
-            if (controllerSpecs.Any())
-            {
-                Parallel.ForEach(controllerSpecs, pOptions, (controllerSpec) =>
+                using (Profiler.Step("GenerateService"))
                 {
-                    var file = GenerateService(controllerSpec);
-                    if (!file.IsNullOrEmpty())
-                        serviceFiles.Add(file);
-                });
-                //var apiExport = GenerateServicesConst(serviceGroupes.Select(x => x.Key),
-                //        //outputDir
-                //        serviceGroupes.FirstOrDefault().FirstOrDefault().Value.OutputDir);
-                //if (!string.IsNullOrEmpty(apiExport))
-                //{
-                //    serviceFiles.Add(apiExport);
-                //}
+                    var serviceFiles = new ConcurrentBag<string>();
 
-                ret.Services = serviceFiles.ToList();
-            }
+                    if (controllerSpecs.Any())
+                    {
+                        Parallel.ForEach(controllerSpecs, pOptions, (controllerSpec) =>
+                        {
+                            (var file, var methodCount) = GenerateService(controllerSpec);
+                            if (!file.IsNullOrEmpty())
+                            {
+                                serviceFiles.Add(file);
+                                ret.MethodCount += methodCount;
+                            }
+                        });
+                        //var apiExport = GenerateServicesConst(serviceGroupes.Select(x => x.Key),
+                        //        //outputDir
+                        //        serviceGroupes.FirstOrDefault().FirstOrDefault().Value.OutputDir);
+                        //if (!string.IsNullOrEmpty(apiExport))
+                        //{
+                        //    serviceFiles.Add(apiExport);
+                        //}
 
-            //_generationContext.ClearGroupGeneratedTypes();
+                        ret.Services = serviceFiles.ToList();
+                    }
+                }
 
-            //generate barrels
+                //_generationContext.ClearGroupGeneratedTypes();
 
-            if (Options.CreateIndexFile)
-            {
-                ret.Index = GenerateIndexFile(typeFiles.Concat(serviceFiles));
-            }
+                //generate barrels
 
-            Parallel.ForEach(generationSpecs, pOptions, (generationSpec) =>
-            {
-                generationSpec.OnBeforeBarrelGeneration(new OnBeforeBarrelGenerationArgs(Options, ret));
-            });
-
-            var barrelFiles = new ConcurrentBag<string>();
-            Parallel.ForEach(generationSpecs, pOptions, (generationSpec) =>
-            {
-                Parallel.ForEach(generationSpec.BarrelSpecs, (barrelSpec) =>
+                if (Options.CreateIndexFile)
                 {
-                    foreach (var barrelFile in GenerateBarrel(barrelSpec))
-                        barrelFiles.Add(barrelFile);
-                });
-            });
-            ret.Barrels = barrelFiles.ToList();
+                    using (Profiler.Step("GenerateIndexFile"))
+                    {
+                        ret.Index = GenerateIndexFile(ret.Types.Concat(ret.Services));
+                    }
+                }
 
-            return ret;
+                using (Profiler.Step("OnBeforeBarrelGeneration"))
+                {
+                    Parallel.ForEach(generationSpecs, pOptions, (generationSpec) =>
+                    {
+                        generationSpec.OnBeforeBarrelGeneration(new OnBeforeBarrelGenerationArgs(Options, ret));
+                    });
+                }
+
+                using (Profiler.Step("GenerateBarrel"))
+                {
+                    var barrelFiles = new ConcurrentBag<string>();
+                    Parallel.ForEach(generationSpecs, pOptions, (generationSpec) =>
+                    {
+                        Parallel.ForEach(generationSpec.BarrelSpecs, (barrelSpec) =>
+                        {
+                            foreach (var barrelFile in GenerateBarrel(barrelSpec))
+                                barrelFiles.Add(barrelFile);
+                        });
+                    });
+                    ret.Barrels = barrelFiles.ToList();
+                }
+
+                return ret;
+            }
         }
 
         private IEnumerable<string> GenerateBarrel(BarrelSpec barrelSpec)
@@ -346,12 +386,18 @@ namespace TypeGen.Core.Generator
 
             if (classAttribute != null || interfaceAttribute != null)
             {
-                return GenerateClassOrInterface(type, (classAttribute as ExportAttribute) ?? interfaceAttribute);
+                using (Profiler.StepIf("GenerateClassOrInterface", 15, true))
+                {
+                    return GenerateClassOrInterface(type, (classAttribute as ExportAttribute) ?? interfaceAttribute);
+                }
             }
 
             if (enumAttribute != null)
             {
-                return GenerateEnum(type, enumAttribute);
+                using (Profiler.StepIf("GenerateEnum", 15, true))
+                {
+                    return GenerateEnum(type, enumAttribute);
+                }
             }
 
             return string.Empty;
@@ -390,7 +436,7 @@ export const APIS = [{apis}];";
             return filePathRelative;
         }
 
-        private string GenerateService(KeyValuePair<Type, ControllerSpec> controller)
+        private (string, int) GenerateService(KeyValuePair<Type, ControllerSpec> controller)
         {
             var outputDir = controller.Value.OutputDir;
             var serviceType = controller.Key;
@@ -409,7 +455,6 @@ export const APIS = [{apis}];";
 
                 return new
                 {
-                    //TODO PropertyNameConverters for methods?
                     Name = Options.PropertyNameConverters.Convert(methodType.Name, methodType),
                     ReturnType = _typeService.GetTsTypeName(returnParameter, false),
                     Parameters = parameters.Select(p => new
@@ -432,7 +477,7 @@ export const APIS = [{apis}];";
             {
                 if (a.Spec.Method == "post" && a.Parameters.Count > 1)
                 {
-
+                    // multiple parameter in post
                 }
                 if (a.Spec.Path.Contains("{"))
                 {
@@ -440,9 +485,16 @@ export const APIS = [{apis}];";
                 }
 
                 var param = "{}";
+                var formParam = "";
+                var additionalBody = "";
                 if (a.Spec.Method == "post")
                 {
                     param = a.Parameters.FirstOrDefault()?.Name ?? param;
+                    if (a.Spec.IsFormData)
+                    {
+                        formParam = param + "Form";
+                        additionalBody = $"let {formParam} = this.createFormData({param});";
+                    }
                 }
                 else if (a.Spec.Method == "get")
                 {
@@ -456,9 +508,14 @@ export const APIS = [{apis}];";
                 }
                 else
                 {
-
+                    // not post or get
                 }
-                var ret = @$"return super.{a.Spec.Method}(""{a.Spec.Path}"", {param});";
+
+                var body = @$"return super.{a.Spec.Method}<{a.ReturnType}>(""{a.Spec.Path}"", {(!a.Spec.IsFormData ? param : formParam+ ", \"events\", true")});";
+                if (a.Spec.IsFormData)
+                {
+                    body = $"{additionalBody}{Environment.NewLine}\t\t" + body;
+                }
                 var parameters = string.Join(", ", a.Parameters.Select(p =>
                 {
                     var defaultVal = "";
@@ -469,15 +526,19 @@ export const APIS = [{apis}];";
                     return p.Name + ": " + p.Type + defaultVal;
                 }));
 
+                var methodReturn = a.Spec.IsFormData ?
+                    $"Observable<HttpEvent<{a.ReturnType}>>" :
+                    $"Observable<{a.ReturnType}>";
+
                 methodStr += $@"{a.Comment}
-    public {a.Name}({parameters}): Observable<{a.ReturnType}> {{
-        {ret}
+    public {a.Name}({parameters}): {methodReturn} {{
+        {body}
     }}{Environment.NewLine}";
             });
 
-            var content = @$"import {{Observable, of}} from ""rxjs"";
+            var content = @$"import {{Observable}} from ""rxjs"";
 import {{Injectable}} from ""@angular/core"";
-import {{HttpClient}} from ""@angular/common/http"";
+import {{HttpClient, HttpEvent}} from ""@angular/common/http"";
 import {{ApiServiceBase}} from ""../api-service-base"";
 {importText}
 {serviceComment}
@@ -519,7 +580,7 @@ describe('{serviceName}', () => {{
 
             // write TypeScript file
             FileContentGenerated?.Invoke(this, new FileContentGeneratedArgs(serviceType, filePath, content));
-            return filePathRelative;
+            return (filePathRelative, methods.Count);
         }
 
         /// <summary>
@@ -644,32 +705,45 @@ describe('{serviceName}', () => {{
             string content;
             if (attribute is ExportTsClassAttribute)
             {
-                string implementsText = _tsContentGenerator.GetImplementsText(type);
-                var propertiesText = GetClassPropertiesText(type);
-
-                var tsCustomBaseAttribute = _metadataReaderFactory.GetInstance().GetAttribute<TsCustomBaseAttribute>(type);
-                var extendsText = string.Empty;
-                if (tsCustomBaseAttribute != null)
+                using (Profiler.Step("GenerateClass"))
                 {
-                    extendsText = string.IsNullOrEmpty(tsCustomBaseAttribute.Base) ? "" : _templateService.GetExtendsText(tsCustomBaseAttribute.Base);
-                }
-                else if (_metadataReaderFactory.GetInstance().GetAttribute<TsIgnoreBaseAttribute>(type) == null)
-                {
-                    extendsText = _tsContentGenerator.GetExtendsText(type);
-                }
+                    string implementsText = _tsContentGenerator.GetImplementsText(type);
+                    var propertiesText = GetClassPropertiesText(type);
 
-                content = _typeService.UseDefaultExport(type) ?
-                    _templateService.FillClassDefaultExportTemplate(importsText, tsTypeName, tsTypeNameFirstPart, extendsText, implementsText, propertiesText, customHead, customBody, GenerateComment(type), Options.FileHeading) :
-                    _templateService.FillClassTemplate(importsText, tsTypeName, extendsText, implementsText, propertiesText, customHead, customBody, GenerateComment(type), Options.FileHeading);
+                    var tsCustomBaseAttribute = _metadataReaderFactory.GetInstance().GetAttribute<TsCustomBaseAttribute>(type);
+                    var extendsText = string.Empty;
+                    if (tsCustomBaseAttribute != null)
+                    {
+                        extendsText = string.IsNullOrEmpty(tsCustomBaseAttribute.Base) ? "" : _templateService.GetExtendsText(tsCustomBaseAttribute.Base);
+                    }
+                    else if (_metadataReaderFactory.GetInstance().GetAttribute<TsIgnoreBaseAttribute>(type) == null)
+                    {
+                        extendsText = _tsContentGenerator.GetExtendsText(type);
+                    }
+
+                    content = _typeService.UseDefaultExport(type) ?
+                        _templateService.FillClassDefaultExportTemplate(importsText, tsTypeName, tsTypeNameFirstPart, extendsText, implementsText, propertiesText, customHead, customBody, GenerateComment(type), Options.FileHeading) :
+                        _templateService.FillClassTemplate(importsText, tsTypeName, extendsText, implementsText, propertiesText, customHead, customBody, GenerateComment(type), Options.FileHeading);
+                }
             }
             else if (attribute is ExportTsInterfaceAttribute)
             {
-                var extendsText = _tsContentGenerator.GetExtendsForInterfacesText(type);
-                var propertiesText = GetInterfacePropertiesText(type);
+                using (Profiler.Step("GenerateInterface"))
+                {
+                    var a = Profiler.StepIf("GetExtendsForInterfacesText", 5);
+                    var extendsText = _tsContentGenerator.GetExtendsForInterfacesText(type);
+                    a.Stop();
+                    a = Profiler.StepIf("GetInterfacePropertiesText", 5);
+                    var propertiesText = GetInterfacePropertiesText(type);
+                    a.Stop();
 
-                content = _typeService.UseDefaultExport(type) ?
-                    _templateService.FillInterfaceDefaultExportTemplate(importsText, tsTypeName, tsTypeNameFirstPart, extendsText, propertiesText, customHead, customBody, GenerateComment(type), Options.FileHeading) :
-                    _templateService.FillInterfaceTemplate(importsText, tsTypeName, extendsText, propertiesText, customHead, customBody, GenerateComment(type), Options.FileHeading);
+                    a = Profiler.StepIf("Template", 5);
+                    content = _typeService.UseDefaultExport(type) ?
+                        _templateService.FillInterfaceDefaultExportTemplate(importsText, tsTypeName, tsTypeNameFirstPart, extendsText, propertiesText, customHead, customBody, GenerateComment(type), Options.FileHeading) :
+                        _templateService.FillInterfaceTemplate(importsText, tsTypeName, extendsText, propertiesText, customHead, customBody, GenerateComment(type), Options.FileHeading);
+                    a.Stop();
+                }
+
             }
             else
             {
@@ -1009,6 +1083,7 @@ describe('{serviceName}', () => {{
         public List<string> Types { get; set; } = new List<string>();
         public List<string> Services { get; set; } = new List<string>();
         public List<string> Barrels { get; set; } = new List<string>();
+        public int MethodCount { get; set; }
         public string Index { get; set; }
 
         public IEnumerable<string> AllFiles => (Types ?? Enumerable.Empty<string>())

@@ -7,14 +7,14 @@ namespace TypeGen.Core.Converters
     /// <summary>
     /// Represents a collection of type name converters
     /// </summary>
-    public class TypeNameConverterCollection : List<ITypeNameConverter>
+    public class TypeNameConverterCollection : List<ITypeNameConverter>, ITypeNameConverter
     {
         public TypeNameConverterCollection()
         {
         }
 
         public TypeNameConverterCollection(params ITypeNameConverter[] converters)
-            : this((IEnumerable<ITypeNameConverter>) converters)
+            : this((IEnumerable<ITypeNameConverter>)converters)
         {
         }
 

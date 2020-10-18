@@ -44,7 +44,9 @@ namespace TypeGen.Core.Test.Business
             var tsContentGenerator = new TsContentGenerator(_typeDependencyService, _typeService, _templateService, _tsContentParser, _metadataReaderFactory, generatorOptionsProvider, null);
 
             //act,assert
-            Assert.Throws<ArgumentNullException>(() => tsContentGenerator.GetImportsText(null, "asdf"));
+            Assert.Throws<ArgumentNullException>(() => tsContentGenerator.GetImportsText(null as Type, "asdf"));
+            Assert.Throws<ArgumentNullException>(() => tsContentGenerator.GetImportsText(null as MethodInfo, "asdf"));
+            Assert.Throws<ArgumentNullException>(() => tsContentGenerator.GetImportsText(null as IEnumerable<MethodInfo>, "asdf"));
         }
 
         [Fact]

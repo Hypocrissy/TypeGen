@@ -75,6 +75,10 @@ namespace TypeGen.Core.Generator.Services
 
         public string GetImportsText(IEnumerable<MethodInfo> methodInfos, string outputDir)
         {
+            Requires.NotNull(methodInfos, nameof(methodInfos));
+            Requires.NotNull(GeneratorOptions.FileNameConverters, nameof(GeneratorOptions.FileNameConverters));
+            Requires.NotNull(GeneratorOptions.TypeNameConverters, nameof(GeneratorOptions.TypeNameConverters));
+
             var result = string.Join(Environment.NewLine, methodInfos.Select(x => GetImportsText(x, outputDir)));
             result = DistinctImports(result);
             return result;
