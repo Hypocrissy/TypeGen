@@ -204,10 +204,11 @@ namespace TypeGen.Core.Generator.Services
                 .Replace(GetTag("exports"), exports));
         }
 
-        public string FillIndexExportTemplate(string filename)
+        public string FillIndexExportTemplate(string filename, string tsTypes)
         {
             return ReplaceSpecialChars(_indexExportTemplate
-                .Replace(GetTag("filename"), filename));
+                .Replace(GetTag("filename"), filename)
+                .Replace(GetTag("tsTypes"), tsTypes));
         }
 
         public string GetExtendsText(string name) => $" extends {name}";

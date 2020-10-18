@@ -51,6 +51,8 @@ namespace TypeGen.Core.Generator
         private readonly ITsContentGenerator _tsContentGenerator;
         private readonly IFileSystem _fileSystem;
 
+        private readonly Dictionary<string, List<string>> _fileTsTypeMapping = new Dictionary<string, List<string>>();
+
         private MiniProfiler Profiler => MiniProfiler.Current ?? MiniProfiler.StartNew("Profiler");
 
         // keeps track of what types have been generated in the current session
@@ -59,6 +61,8 @@ namespace TypeGen.Core.Generator
         public Generator(GeneratorOptions options, ILogger logger = null)
         {
             Requires.NotNull(options, nameof(options));
+
+            _fileTsTypeMapping.Clear();
 
             //_generationContext = new GenerationContext();
             FileContentGenerated += OnFileContentGenerated;
@@ -338,7 +342,19 @@ namespace TypeGen.Core.Generator
                     );
             }
 
-            string indexExportsContent = entries.Aggregate("", (acc, entry) => acc += _templateService.FillIndexExportTemplate(entry));
+            entries = entries.Where(x => !x.EndsWith(".spec")).ToList();
+
+            string indexExportsContent = entries.Aggregate("", (acc, entry) =>
+            {
+                var tsTypes = "*";
+                if (_fileTsTypeMapping.TryGetValue(entry, out var listTsTypes))
+                {
+                    tsTypes = string.Join(", ", listTsTypes);
+                    tsTypes = "{" + tsTypes + "}";
+                }
+                acc += _templateService.FillIndexExportTemplate(entry, tsTypes);
+                return acc;
+            });
             string content = _templateService.FillIndexTemplate(indexExportsContent);
 
             FileContentGenerated?.Invoke(this, new FileContentGeneratedArgs(null, filePath, content));
@@ -362,7 +378,7 @@ namespace TypeGen.Core.Generator
             string exports = generatedFiles.Aggregate("", (prevExports, file) =>
             {
                 string fileNameWithoutExt = file.Remove(file.Length - typeScriptFileExtension.Length).Replace("\\", "/");
-                return prevExports + _templateService.FillIndexExportTemplate(fileNameWithoutExt);
+                return prevExports + _templateService.FillIndexExportTemplate(fileNameWithoutExt, "*");
             });
             string content = _templateService.FillIndexTemplate(exports);
 
@@ -511,7 +527,7 @@ export const APIS = [{apis}];";
                     // not post or get
                 }
 
-                var body = @$"return super.{a.Spec.Method}<{a.ReturnType}>(""{a.Spec.Path}"", {(!a.Spec.IsFormData ? param : formParam+ ", \"events\", true")});";
+                var body = @$"return super.{a.Spec.Method}<{a.ReturnType}>(""{a.Spec.Path}"", {(!a.Spec.IsFormData ? param : formParam + ", \"events\", true")});";
                 if (a.Spec.IsFormData)
                 {
                     body = $"{additionalBody}{Environment.NewLine}\t\t" + body;
@@ -577,6 +593,8 @@ describe('{serviceName}', () => {{
 
             var filePath = GetFilePath(serviceType, outputDir);
             var filePathRelative = GetRelativeFilePath(serviceType, outputDir);
+
+            AddFileTsTypeMapping(filePathRelative, serviceName);
 
             // write TypeScript file
             FileContentGenerated?.Invoke(this, new FileContentGeneratedArgs(serviceType, filePath, content));
@@ -652,6 +670,18 @@ describe('{serviceName}', () => {{
             GenerationSpec generationSpec = generationSpecProvider.GetGenerationSpec(type);
 
             return Generate(new[] { generationSpec });
+        }
+
+        private void AddFileTsTypeMapping(string relativePath, string tsTypeName)
+        {
+            lock (_fileTsTypeMapping)
+            {
+                var fileName = Path.GetFileNameWithoutExtension(relativePath);
+                if (!_fileTsTypeMapping.TryGetValue(fileName, out var types))
+                    _fileTsTypeMapping[fileName] = (types = new List<string>());
+
+                types.Add(tsTypeName);
+            }
         }
 
         /// <summary>
@@ -750,6 +780,8 @@ describe('{serviceName}', () => {{
                 throw new CoreException($"Type {type.Name} has neither an ExportTsClassAttribute or an ExportTsInterfaceAttribute!");
             }
 
+            AddFileTsTypeMapping(filePathRelative, tsTypeNameFirstPart);
+
             // write TypeScript file
             FileContentGenerated?.Invoke(this, new FileContentGeneratedArgs(type, filePath, content));
             return filePathRelative;
@@ -773,6 +805,8 @@ describe('{serviceName}', () => {{
             string enumText = _typeService.UseDefaultExport(type) ?
                 _templateService.FillEnumDefaultExportTemplate("", tsEnumName, valuesText, enumAttribute.IsConst, GenerateComment(type), Options.FileHeading) :
                 _templateService.FillEnumTemplate("", tsEnumName, valuesText, enumAttribute.IsConst, GenerateComment(type), Options.FileHeading);
+
+            AddFileTsTypeMapping(filePathRelative, tsEnumName);
 
             // write TypeScript file
             FileContentGenerated?.Invoke(this, new FileContentGeneratedArgs(type, filePath, enumText));

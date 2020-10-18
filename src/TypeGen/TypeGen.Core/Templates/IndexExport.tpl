@@ -1,1 +1,1 @@
-export * from './$tg{filename}';
+export $tg{tsTypes} from './$tg{filename}';
