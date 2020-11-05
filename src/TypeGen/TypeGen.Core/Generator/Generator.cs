@@ -571,8 +571,45 @@ namespace TypeGen.Core.Generator
 
                 var parameterList = string.Join(", ", f.Parameters.Select(p => p.Name));
 
+                var fInject = string.Empty;
+                if (f.Name == "updateWebRecorderState")
+                {
+                    fInject = @"
+		webRecorderInfo = $.extend(true, {}, webRecorderInfo);
+		this._simUtilityService.removeAllPropertiesByNames(webRecorderInfo, [""properties"", ""resolutions""]);
+";
+                }
+                else if (f.Name == "updatePlayerState")
+                {
+                    fInject = @"
+	    // Null-Check added
+	    // See: SIMSOFT-3381
+	    if (!playerInfo) 
+            return Promise.resolve();
+
+		playerInfo = $.extend(true, {}, playerInfo);
+
+		if (playerInfo.debriefingStatus) {
+			if (isNaN(playerInfo.debriefingStatus.timeLeft)) {
+				playerInfo.debriefingStatus.timeLeft = 0;
+			}
+		}
+
+		// =============================================================================== //
+		// SIMSOFT-5601                                                                    //
+		// =============================================================================== //
+		// Attention:                                                                      //
+		// We must remove the cameras of the currentTrainingRoom, because the cameras will //
+		// exceed the signalR message limit                                                //
+		// =============================================================================== //
+
+		this._simUtilityService.removeAllPropertiesByNames(playerInfo,
+			[""properties"", ""icons"", ""recordingMarkerSet"", ""iconUrl"", ""durationMarkerLines"", ""resolutions""]);
+";
+                }
+
                 var functionStr = $@"
-    public {f.Name}({parameters}): Promise<{f.ReturnType}> {{
+    public {f.Name}({parameters}): Promise<{f.ReturnType}> {{{fInject}
         return this._hubClient.invoke<{f.ReturnType}>(""{f.OriginalName}"", (proxy, method) => proxy.invoke(method, {parameterList}));
     }}";
                 return functionStr;
@@ -597,6 +634,7 @@ namespace TypeGen.Core.Generator
 
             var content = @$"import {{Directive, Injectable, Injector}} from ""@angular/core"";
 import {{BaseHubClient, BaseHubService}} from ""../hub-service-base.service"";
+import {{SimUtilityService}} from ""../../app/core/services/sim-services"";
 {importText}
 
 @Injectable({{
@@ -628,7 +666,9 @@ export class {hubClientName} extends BaseHubClient {{
 {hubComment}
 @Directive()
 export class {hubServiceName} extends BaseHubService<{hubClientName}> {{
-	constructor(client: {hubClientName}) {{
+	constructor(client: {hubClientName},
+                protected _injector: Injector,
+                protected _simUtilityService: SimUtilityService) {{
 		super(client);
 	}}
 {string.Join(Environment.NewLine, functionStrList)}
