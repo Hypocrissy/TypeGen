@@ -181,6 +181,7 @@ namespace TypeGen.Core.Generator
                 //Merge TypeSpecs
                 var typeSpecs = new Dictionary<Type, TypeSpec>();
                 var controllerSpecs = new Dictionary<Type, ControllerSpec>();
+                var hubSpecs = new Dictionary<Type, HubSpec>();
 
                 using (Profiler.Step("GenerationSpec"))
                 {
@@ -194,6 +195,25 @@ namespace TypeGen.Core.Generator
                             {
                                 generationSpec.AddType(m.Key.ReturnParameter.ParameterType);
                                 foreach (var parameter in m.Key.GetParameters())
+                                    generationSpec.AddType(parameter.ParameterType);
+                            }
+                        }
+
+                        //add all parameter and return types to specs
+                        foreach (var h in generationSpec.HubSpecs)
+                        {
+                            hubSpecs.Merge(h.Key, h.Value);
+                            foreach (var e in h.Value.Events)
+                            {
+                                //return type of events are not considered
+                                //generationSpec.AddType(e.ReturnParameter.ParameterType);
+                                foreach (var parameter in e.GetParameters())
+                                    generationSpec.AddType(parameter.ParameterType);
+                            }
+                            foreach (var f in h.Value.Functions)
+                            {
+                                generationSpec.AddType(f.ReturnParameter.ParameterType);
+                                foreach (var parameter in f.GetParameters())
                                     generationSpec.AddType(parameter.ParameterType);
                             }
                         }
@@ -279,6 +299,32 @@ namespace TypeGen.Core.Generator
                     }
                 }
 
+                using (Profiler.Step("GenerateHubs"))
+                {
+                    var hubFiles = new ConcurrentBag<string>();
+                    var hubEvents = new ConcurrentBag<(string, string)>();
+
+                    if (hubSpecs.Any())
+                    {
+                        Parallel.ForEach(hubSpecs, pOptions, (hubSpec) =>
+                        {
+                            (var file, var eventCount, var functionCount) = GenerateHub(hubSpec, out var hubEvent);
+                            if (!file.IsNullOrEmpty())
+                            {
+                                hubEvents.Add(hubEvent);
+                                hubFiles.Add(file);
+                                ret.EventCount += eventCount;
+                                ret.FunctionCount += functionCount;
+                            }
+                        });
+
+                        var file = GenerateHubEventsFile(hubSpecs.First().Value.OutputDir, hubEvents.ToList());
+                        hubFiles.Add(file);
+
+                        ret.Hubs = hubFiles.ToList();
+                    }
+                }
+
                 //_generationContext.ClearGroupGeneratedTypes();
 
                 //generate barrels
@@ -319,7 +365,9 @@ namespace TypeGen.Core.Generator
 
         private IEnumerable<string> GenerateBarrel(BarrelSpec barrelSpec)
         {
-            string directory = Path.Combine(Options.BaseOutputDirectory?.EnsurePostfix("/") ?? "", barrelSpec.Directory);
+            var directory = Path.Combine(Options.BaseOutputDirectory?.EnsurePostfix("/") ?? "", barrelSpec.Directory);
+            if (!Directory.Exists(directory))
+                return Enumerable.Empty<string>();
 
             var fileName = "index";
             if (!string.IsNullOrWhiteSpace(Options.TypeScriptFileExtension)) fileName += $".{Options.TypeScriptFileExtension}";
@@ -421,33 +469,225 @@ namespace TypeGen.Core.Generator
             //throw new CoreException($"Generated type must be either a C# class, interface or enum. Error when generating type {type.FullName}");
         }
 
-        private string GenerateServicesConst(IEnumerable<Type> services, string outputDir)
-        {
-            if (!services.Any())
-                return string.Empty;
+        //        private string GenerateServicesConst(IEnumerable<Type> services, string outputDir)
+        //        {
+        //            if (!services.Any())
+        //                return string.Empty;
 
-            var servicesFormatted = services.Select(serviceType =>
+        //            var servicesFormatted = services.Select(serviceType =>
+        //            {
+        //                return new
+        //                {
+        //                    Name = Options.TypeNameConverters.Convert(serviceType.Name, serviceType),
+        //                    Import = _tsContentGenerator.GetTypeImportsText(serviceType, outputDir)
+        //                };
+        //            }).ToList();
+
+        //            //TODO Into Template - for testing only
+
+        //            var importText = string.Join("", servicesFormatted.Select(x => x.Import));
+        //            var apis = string.Join(", ", servicesFormatted.Select(x => x.Name));
+
+        //            var content = @$"
+        //{importText}
+        //export const APIS = [{apis}];";
+
+        //            var filePath = GetFilePath("apis.export", outputDir);
+        //            var filePathRelative = GetRelativeFilePath("apis.export", outputDir);
+
+        //            // write TypeScript file
+        //            FileContentGenerated?.Invoke(this, new FileContentGeneratedArgs(null, filePath, content));
+        //            return filePathRelative;
+        //        }
+
+        private (string, int, int) GenerateHub(KeyValuePair<Type, HubSpec> hub, out (string imports, string @events) hubEvents)
+        {
+            var outputDir = hub.Value.OutputDir;
+            var hubType = hub.Key;
+
+            var hubName = hubType.Name;
+            var hubClientName = Options.TypeNameConverters.Convert(hubType.Name, hubType).Replace("Hub", "Client");
+            var hubServiceName = Options.TypeNameConverters.Convert(hubType.Name, hubType);
+
+            var importText = _tsContentGenerator.GetImportsText(hub.Value.Events.Union(hub.Value.Functions), outputDir);
+            var hubComment = GenerateComment(hubType);
+
+            var @events = hub.Value.Events.Select(@event =>
             {
+                var methodType = @event;
+
+                var returnParameter = methodType.ReturnParameter.ParameterType;
+                var parameters = methodType.GetParameters().Select(x => new { x.ParameterType, x.Name, x.HasDefaultValue, x.DefaultValue }).ToList();
+
                 return new
                 {
-                    Name = Options.TypeNameConverters.Convert(serviceType.Name, serviceType),
-                    Import = _tsContentGenerator.GetTypeImportsText(serviceType, outputDir)
+                    EventName = methodType.Name,
+                    Parameters = parameters.Select(p => new
+                    {
+                        Name = Options.PropertyNameConverters.Convert(p.Name, p.ParameterType),
+                        Type = _typeService.GetTsTypeName(p.ParameterType, false)
+                    }).ToList(),
+                    Comment = GenerateComment(methodType)
+                };
+            }).ToList();
+
+            var @functions = hub.Value.Functions.Select(@function =>
+            {
+                var methodType = @function;
+
+                var returnParameter = methodType.ReturnParameter.ParameterType;
+                var parameters = methodType.GetParameters().Select(x => new { x.ParameterType, x.Name, x.HasDefaultValue, x.DefaultValue }).ToList();
+
+                return new
+                {
+                    Name = Options.PropertyNameConverters.Convert(methodType.Name, methodType),
+                    OriginalName = methodType.Name,
+                    ReturnType = _typeService.GetTsTypeName(returnParameter, false),
+                    Parameters = parameters.Select(p => new
+                    {
+                        Name = Options.PropertyNameConverters.Convert(p.Name != "arguments" ? p.Name : "args", p.ParameterType),
+                        OriginalName = p.Name,
+                        Type = _typeService.GetTsTypeName(p.ParameterType, false),
+                        p.HasDefaultValue,
+                        p.DefaultValue
+                    }).ToList(),
+                    Comment = GenerateComment(methodType)
                 };
             }).ToList();
 
             //TODO Into Template - for testing only
 
-            var importText = string.Join("", servicesFormatted.Select(x => x.Import));
-            var apis = string.Join(", ", servicesFormatted.Select(x => x.Name));
+            var functionStrList = functions.Select(f =>
+            {
+                var parameters = string.Join(", ", f.Parameters.Select(p =>
+                {
+                    var defaultVal = "";
+                    if (p.HasDefaultValue)
+                    {
+                        defaultVal = $" = {JsonConvert.SerializeObject(p.DefaultValue)}";
+                    }
+                    return p.Name + ": " + p.Type + defaultVal;
+                }));
 
-            var content = @$"
+                var parameterList = string.Join(", ", f.Parameters.Select(p => p.Name));
+
+                var functionStr = $@"
+    public {f.Name}({parameters}): Promise<{f.ReturnType}> {{
+        return this._hubClient.invoke<{f.ReturnType}>(""{f.OriginalName}"", (proxy, method) => proxy.invoke(method, {parameterList}));
+    }}";
+                return functionStr;
+            });
+
+            var eventsList = events.Select(e =>
+            {
+                var parameters = e.Parameters.Any() ? string.Join(", ", e.Parameters.Select(p => p.Name + ": " + p.Type)) : string.Empty;
+                var parametersSubDecl = e.Parameters.Any() ? $"<{{{string.Join(", ", e.Parameters.Select(p => p.Name + ": " + p.Type))}}}>" : "<void>";
+                var parameterList = e.Parameters.Any() ? $"{{{string.Join(", ", e.Parameters.Select(p => p.Name))}}}" : string.Empty;
+
+                var eventStr = $"\tpublic readonly on{e.EventName} : ISubject{parametersSubDecl} = new Subject{parametersSubDecl}();";
+                var eventWireup =
+        $@"{"\t\t"}proxy.on(""{e.EventName}"", ({parameters}) => {{
+            this._emitterService.on{e.EventName}.next({parameterList});
+        }});";
+
+                return new { eventStr, eventWireup };
+            }).ToList();
+
+            hubEvents = (importText, string.Join(Environment.NewLine, eventsList.Select(x => x.eventStr)));
+
+            var content = @$"import {{Directive, Injectable, Injector}} from ""@angular/core"";
+import {{BaseHubClient, BaseHubService}} from ""../hub-service-base.service"";
 {importText}
-export const APIS = [{apis}];";
 
-            var filePath = GetFilePath("apis.export", outputDir);
-            var filePathRelative = GetRelativeFilePath("apis.export", outputDir);
+@Injectable({{
+    providedIn: ""root"",
+}})
+export class {hubClientName} extends BaseHubClient {{
+	protected readonly HubName: string = ""{hubName}"";
+
+	constructor(injector: Injector) {{
+        super(injector);
+	}}
+
+	protected wireOnMessage(proxy: SignalR.Hub.Proxy) {{
+{string.Join(Environment.NewLine, eventsList.Select(x => x.eventWireup))}
+    }}
+
+	protected connectionDisconnectedAction(): void {{
+        this._emitterService.on{hubName}Disconnected.next();
+	}}
+
+	protected connectionErrorAction(message: string): void {{
+        this._emitterService.on{hubName}Error.next({{message}});
+	}}
+
+	protected connectionReconnectedAction(): void {{
+        this._emitterService.on{hubName}Reconnected.next();
+	}}
+}}
+{hubComment}
+@Directive()
+export class {hubServiceName} extends BaseHubService<{hubClientName}> {{
+	constructor(client: {hubClientName}) {{
+		super(client);
+	}}
+{string.Join(Environment.NewLine, functionStrList)}
+}}
+";
+
+            #region SPEC - TBI
+            //            #region spec
+            //            {
+            //                var serviceImport = _tsContentGenerator.GetTypeImportsText(serviceType, outputDir);
+            //                var serviceSpecContent = $@"import {{TestBed}} from '@angular/core/testing';
+
+            //{serviceImport}
+            //describe('{serviceName}', () => {{
+            //    beforeEach(() => TestBed.configureTestingModule({{}}));
+
+            //	it('should be created', () => {{
+            //		const service: {serviceName} = TestBed.inject({serviceName});
+            //		expect(service).toBeTruthy();
+            //	}});
+            //}});";
+
+            //                var specPath = GetFilePath(serviceType, outputDir, ".spec");
+            //                //var specPathRelative = GetRelativeFilePath(serviceType, outputDir, ".spec");
+
+            //                // write TypeScript file
+            //                FileContentGenerated?.Invoke(this, new FileContentGeneratedArgs(serviceType, specPath, serviceSpecContent));
+            //            }
+            //            #endregion
+
+            #endregion
+
+            var filePath = GetFilePath(hubType, outputDir);
+            var filePathRelative = GetRelativeFilePath(hubType, outputDir);
+
+            AddFileTsTypeMapping(filePathRelative, hubName);
 
             // write TypeScript file
+            FileContentGenerated?.Invoke(this, new FileContentGeneratedArgs(hubType, filePath, content));
+            return (filePathRelative, events.Count(), functions.Count());
+        }
+
+        private string GenerateHubEventsFile(string outputDir, List<(string imports, string @events)> hubEvents)
+        {
+            var imports = string.Join(Environment.NewLine,
+                hubEvents.SelectMany(x => x.imports.Split(new[] { Environment.NewLine }, StringSplitOptions.RemoveEmptyEntries)).Distinct());
+            var @events = string.Join(Environment.NewLine,
+                hubEvents.SelectMany(x => x.events.Split(new[] { Environment.NewLine }, StringSplitOptions.RemoveEmptyEntries)).Distinct());
+            var content = $@"import {{ISubject}} from ""../custom-subject-observable"";
+import {{Subject}} from ""rxjs"";
+{imports}
+
+export abstract class HubEventEmitter {{
+{events}
+}}";
+
+            var filePath = GetFilePath("hub-event-emitter.service", outputDir);
+            var filePathRelative = GetRelativeFilePath("hub-event-emitter.service", outputDir);
+
             FileContentGenerated?.Invoke(this, new FileContentGeneratedArgs(null, filePath, content));
             return filePathRelative;
         }
@@ -1114,15 +1354,19 @@ describe('{serviceName}', () => {{
 
     public class GenerationResult
     {
-        public List<string> Types { get; set; } = new List<string>();
-        public List<string> Services { get; set; } = new List<string>();
-        public List<string> Barrels { get; set; } = new List<string>();
-        public int MethodCount { get; set; }
-        public string Index { get; set; }
+        public List<string> Types { get; internal set; } = new List<string>();
+        public List<string> Services { get; internal set; } = new List<string>();
+        public List<string> Hubs { get; internal set; } = new List<string>();
+        public List<string> Barrels { get; internal set; } = new List<string>();
+        public int MethodCount { get; internal set; }
+        public int EventCount { get; internal set; }
+        public int FunctionCount { get; internal set; }
+        public string Index { get; internal set; }
 
         public IEnumerable<string> AllFiles => (Types ?? Enumerable.Empty<string>())
             .Concat(Services ?? Enumerable.Empty<string>())
             .Concat(Barrels ?? Enumerable.Empty<string>())
+            .Concat(Hubs ?? Enumerable.Empty<string>())
             .Concat(new[] { Index })
             .Where(x => !string.IsNullOrEmpty(x));
     }

@@ -15,6 +15,7 @@ namespace TypeGen.Core.SpecGeneration
     {
         internal GeneratorOptions Options { get; set; }
         internal IDictionary<Type, ControllerSpec> ControllerSpecs { get; }
+        internal IDictionary<Type, HubSpec> HubSpecs { get; }
         internal IDictionary<Type, TypeSpec> TypeSpecs { get; }
         internal IList<BarrelSpec> BarrelSpecs { get; }
 
@@ -23,6 +24,7 @@ namespace TypeGen.Core.SpecGeneration
             TypeSpecs = new Dictionary<Type, TypeSpec>();
             BarrelSpecs = new List<BarrelSpec>();
             ControllerSpecs = new Dictionary<Type, ControllerSpec>();
+            HubSpecs = new Dictionary<Type, HubSpec>();
         }
 
         public virtual void OnBeforeGeneration(OnBeforeGenerationArgs args)
@@ -134,6 +136,18 @@ namespace TypeGen.Core.SpecGeneration
                 ControllerSpecs.Add(controllerType, controllerSpec = new ControllerSpec { OutputDir = outputDir });
             }
             controllerSpec.Methods[methodInfo] = methodSpec;
+        }
+
+        protected internal void AddHub(Type controllerType, MethodInfo methodInfo, bool isEvent, string outputDir)
+        {
+            if (!HubSpecs.TryGetValue(controllerType, out var controllerSpec))
+            {
+                HubSpecs.Add(controllerType, controllerSpec = new HubSpec { OutputDir = outputDir });
+            }
+            if (isEvent)
+                controllerSpec.Events.Add(methodInfo);
+            else
+                controllerSpec.Functions.Add(methodInfo);
         }
 
         /// <summary>

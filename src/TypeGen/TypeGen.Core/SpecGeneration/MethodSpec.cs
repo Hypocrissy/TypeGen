@@ -1,5 +1,4 @@
-﻿using System;
-using System.Collections.Generic;
+﻿using System.Collections.Generic;
 using System.Reflection;
 
 namespace TypeGen.Core.SpecGeneration
@@ -15,5 +14,12 @@ namespace TypeGen.Core.SpecGeneration
     {
         public string OutputDir { get; set; }
         public IDictionary<MethodInfo, MethodSpec> Methods { get; set; } = new Dictionary<MethodInfo, MethodSpec>();
+    }
+
+    public class HubSpec
+    {
+        public string OutputDir { get; set; }
+        public HashSet<MethodInfo> Events { get; set; } = new HashSet<MethodInfo>();
+        public HashSet<MethodInfo> Functions { get; set; } = new HashSet<MethodInfo>();
     }
 }
